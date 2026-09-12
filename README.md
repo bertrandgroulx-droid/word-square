@@ -82,9 +82,22 @@ It fetches four word lists and combines them into a pool:
 
 | Source | Used for |
 |---|---|
-| [TWL Scrabble dictionary](https://github.com/redbo/scrabble) | What counts as a word. Scrabble lists carry no proper nouns, so `MOORE` can't sneak in |
-| [OpenSubtitles frequency list](https://github.com/hermitdave/FrequencyWords) | Which of those words a player is likely to know |
+| [TWL Scrabble dictionary](https://github.com/redbo/scrabble) | What a typed row is **accepted** against. Scrabble lists carry no proper nouns, so `MOORE` can't sneak in |
+| [OpenSubtitles frequency list](https://github.com/hermitdave/FrequencyWords) | Which of those the puzzles are **built** from |
 | [LDNOOBW](https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words) | Profanity, filtered out |
+
+Those are two different questions and the generator answers them separately.
+
+A row or column you type is checked against **the whole Scrabble dictionary at
+that length** — 3,976 four-letter words and 8,875 five-letter ones. If a board
+would take it, the grid takes it, `QOPH` and `ZARF` included.
+
+The squares themselves are built from a far smaller pool of **common** words,
+1,216 at 4×4 and up to 2,911 at 5×5. A bank generated over the whole Scrabble
+list would cheerfully deal a grid spelling `QOPH` and `XYST`, which is
+unsolvable rather than hard. So what you are dealt stays ordinary and only the
+accept-check is wide, which is what makes "any valid square wins" mean
+something.
 
 The search then fills a grid row by row, pruning on column prefixes: after *i*
 rows, every column holds an *i*-letter prefix that must still be extendable to a
