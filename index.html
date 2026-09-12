@@ -56,6 +56,9 @@
   .topbar { display: flex; align-items: center; gap: 8px; flex: none; }
   .brand { display: flex; align-items: center; gap: 6px; font-size: 1rem; font-weight: 800; white-space: nowrap; }
   .brand .logo { font-size: 1.15rem; }
+  /* Two segmented controls need the room; the wordmark is the first to go. */
+  .brand .name { display: none; }
+  @media (min-width: 430px) { .brand .name { display: inline; } }
   .spacer { flex: 1; }
 
   .seg {
@@ -66,7 +69,7 @@
   .seg button {
     border: none; background: transparent; color: var(--muted);
     font-family: inherit; font-size: 0.85rem; font-weight: 700;
-    padding: 0.42rem 0.72rem; cursor: pointer;
+    padding: 0.42rem 0.6rem; cursor: pointer; white-space: nowrap;
   }
   .seg button.active { background: var(--accent); color: #1b1740; }
 
@@ -205,11 +208,15 @@
 </head>
 <body>
   <div class="topbar">
-    <div class="brand"><span class="logo" aria-hidden="true">🔡</span><span>Word Square</span></div>
+    <div class="brand"><span class="logo" aria-hidden="true">🔡</span><span class="name">Word Square</span></div>
     <div class="spacer"></div>
     <div class="seg" role="group" aria-label="Grid size">
       <button type="button" id="size4">4×4</button>
       <button type="button" id="size5">5×5</button>
+    </div>
+    <div class="seg" role="group" aria-label="Difficulty">
+      <button type="button" id="modeEasy">Easy</button>
+      <button type="button" id="modeHard">Hard</button>
     </div>
     <button class="icon-btn" id="helpBtn" type="button" aria-label="How to play">?</button>
   </div>
@@ -247,9 +254,18 @@
         <li>Tap a square, then tap a tray letter or type one. Tap a placed letter to send it back.</li>
         <li>A dot lights up beside each row and under each column once it spells a word.</li>
         <li>Any valid square wins, not just the one we had in mind.</li>
-      <li>🎲 deals a practice puzzle; the label up top brings you back to today's.</li>
+        <li>🎲 deals a practice puzzle; the label up top brings you back to today's.</li>
       </ul>
-      <p class="k">A new puzzle every day, at both sizes. Your streak is kept on this device.</p>
+      <h2>Easy and Hard</h2>
+      <ul>
+        <li><b>Easy</b> grids are mirrors. The first column spells the same word
+          as the top row, the second column the same as the second row, and so
+          on — so every row you solve hands you a column for free.</li>
+        <li><b>Hard</b> grids have no mirror. All eight words (ten at 5×5) are
+          different, and nothing comes free.</li>
+      </ul>
+      <p class="k">A new puzzle every day, at each size and difficulty. Your place is
+        kept on this device, so you can put it down and come back.</p>
       <div class="btn-row"><button type="button" class="primary" id="helpClose">Got it</button></div>
     </div>
   </div>
