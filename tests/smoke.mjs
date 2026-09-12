@@ -10,7 +10,8 @@ import path from "node:path";
 const ROOT = path.resolve(new URL("../", import.meta.url).pathname);
 const TYPES = {
   ".html": "text/html", ".js": "text/javascript", ".json": "application/json",
-  ".webmanifest": "application/manifest+json", ".png": "image/png", ".svg": "image/svg+xml"
+  ".webmanifest": "application/manifest+json", ".png": "image/png", ".svg": "image/svg+xml",
+  ".ico": "image/x-icon"
 };
 
 function serve() {
@@ -83,12 +84,24 @@ async function run() {
   assert(Object.values(bankCheck.counts).every((c) => c >= 50),
     `a bank is too small: ${JSON.stringify(bankCheck.counts)}`);
 
-  // 2) Help shows on a first visit, and closes.
+  // 2) Every icon the page declares is actually there. A missing one sends the
+  //    browser hunting for a fallback, which on a shared github.io address
+  //    means picking up a neighbouring app's icon.
+  const icons = await page.$$eval("link[rel~='icon'], link[rel='apple-touch-icon']",
+    (els) => els.map((e) => e.getAttribute("href")));
+  assert(icons.length >= 7, `expected the full icon set, got ${icons.length}`);
+  for (const href of icons) {
+    const res = await page.request.get(new URL(href, base).href);
+    assert(res.status() === 200, `icon ${href} -> HTTP ${res.status()}`);
+    assert((await res.body()).length > 0, `icon ${href} is empty`);
+  }
+
+  // 3) Help shows on a first visit, and closes.
   assert(await page.$eval("#helpBack", (e) => !e.classList.contains("hidden")), "help opens first time");
   await page.click("#helpClose");
   assert(await page.$eval("#helpBack", (e) => e.classList.contains("hidden")), "help closes");
 
-  // 3) A fresh 4x4 board: 16 squares, 6 givens, 10 letters in the tray, and
+  // 4) A fresh 4x4 board: 16 squares, 6 givens, 10 letters in the tray, and
   //    every row and column carries at least one given.
   assert(await page.$eval("#modeEasy", (e) => e.classList.contains("active")), "opens on Easy");
   assert((await cellText(page)).length === 16, "16 cells");
@@ -104,7 +117,7 @@ async function run() {
   });
   assert(cover.rows === 4 && cover.cols === 4, `givens cover every line, got ${JSON.stringify(cover)}`);
 
-  // 4) Placing and taking back a letter, via the tray.
+  // 5) Placing and taking back a letter, via the tray.
   const before = await freeTiles(page);
   await page.click("#tray .tile:not(.spent)");
   assert((await freeTiles(page)) === before - 1, "tray tile is spent after placing");
@@ -115,12 +128,12 @@ async function run() {
   await page.click(`#grid .cell:nth-child(${placedAt + 1})`);
   assert((await freeTiles(page)) === before, "tapping a placed letter returns it");
 
-  // 5) A hint fills a square and counts.
+  // 6) A hint fills a square and counts.
   await page.click("#hintBtn");
   assert((await freeTiles(page)) === before - 1, "hint consumes a tray letter");
   assert((await page.evaluate(() => window.game._debug.state().hints)) === 1, "hint counted");
 
-  // 6) Solving lights every pip and opens the win dialog.
+  // 7) Solving lights every pip and opens the win dialog.
   await page.evaluate(() => window.game._debug.solve());
   assert((await litPips(page)) === 8, `8 pips lit on a solved 4x4, got ${await litPips(page)}`);
   await page.waitForSelector("#winBack:not(.hidden)", { timeout: 3000 });
@@ -134,13 +147,13 @@ async function run() {
   assert((await page.$eval("#winStreak", (e) => e.textContent)) === "1", "daily solve starts a streak");
   await page.click("#winBack", { position: { x: 5, y: 5 } });
 
-  // 7) The 5x5 board.
+  // 8) The 5x5 board.
   await page.click("#size5");
   assert((await cellText(page)).length === 25, "25 cells at 5x5");
   assert((await givenCount(page)) === 9, `9 givens at 5x5, got ${await givenCount(page)}`);
   assert((await freeTiles(page)) === 16, `16 tray tiles at 5x5, got ${await freeTiles(page)}`);
 
-  // 8) Typing works, and a letter the tray doesn't hold is refused.
+  // 9) Typing works, and a letter the tray doesn't hold is refused.
   await page.click("#grid .cell:not(.given)");
   const spare = await page.evaluate(() => {
     const have = new Set([...document.querySelectorAll("#tray .tile:not(.spent)")].map((e) => e.textContent));
@@ -154,7 +167,7 @@ async function run() {
   await page.keyboard.press(inTray);
   assert((await freeTiles(page)) === tilesBefore - 1, "typing a tray letter places it");
 
-  // 9) Difficulty switches the puzzle and survives a reload.
+  // 10) Difficulty switches the puzzle and survives a reload.
   const easyId = await page.evaluate(() => window.game._debug.state().id);
   await page.click("#modeHard");
   const hardState = await page.evaluate(() => window.game._debug.state());
@@ -178,11 +191,11 @@ async function run() {
   assert(hardSolved, "every hard puzzle at this size is mirror-free");
   await page.click("#modeEasy");
 
-  // 10) The date label carries the date and nothing else.
+  // 11) The date label carries the date and nothing else.
   const label = await page.$eval("#puzLabel", (e) => e.textContent);
   assert(/^Daily · \d{4}-\d\d-\d\d$/.test(label), `bare date label, got "${label}"`);
 
-  // 11) Progress survives a reload, and the daily puzzle is the same puzzle.
+  // 12) Progress survives a reload, and the daily puzzle is the same puzzle.
   const midway = await page.evaluate(() => window.game._debug.state());
   await page.reload();
   await page.waitForSelector("#grid .cell");
@@ -191,7 +204,7 @@ async function run() {
   assert(after.cells === midway.cells, "grid restored after reload");
   assert(after.n === 5, "size remembered after reload");
 
-  // 12) Random practice puzzles load and differ from the daily one.
+  // 13) Random practice puzzles load and differ from the daily one.
   await page.click("#newBtn");
   const rnd = await page.evaluate(() => window.game._debug.state());
   assert(rnd.id.startsWith("free:5:easy:"), `random puzzle loaded, got ${rnd.id}`);
@@ -200,7 +213,7 @@ async function run() {
   assert((await litPips(page)) === 10, "10 pips lit on a solved 5x5");
   await page.click("#winBack", { position: { x: 5, y: 5 } });
 
-  // 13) The label leads back to today's puzzle.
+  // 14) The label leads back to today's puzzle.
   await page.click("#puzLabel .link");
   const home = await page.evaluate(() => window.game._debug.state());
   assert(home.id.startsWith("daily:5:easy:"), `back on the daily puzzle, got ${home.id}`);
