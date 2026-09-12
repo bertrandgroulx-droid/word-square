@@ -142,7 +142,11 @@ async function run() {
   await page.keyboard.press(inTray);
   assert((await freeTiles(page)) === tilesBefore - 1, "typing a tray letter places it");
 
-  // 9) Progress survives a reload, and the daily puzzle is the same puzzle.
+  // 9) The date label carries the date and nothing else.
+  const label = await page.$eval("#puzLabel", (e) => e.textContent);
+  assert(/^Daily · \d{4}-\d\d-\d\d$/.test(label), `bare date label, got "${label}"`);
+
+  // 10) Progress survives a reload, and the daily puzzle is the same puzzle.
   const midway = await page.evaluate(() => window.game._debug.state());
   await page.reload();
   await page.waitForSelector("#grid .cell");
@@ -151,7 +155,7 @@ async function run() {
   assert(after.cells === midway.cells, "grid restored after reload");
   assert(after.n === 5, "size remembered after reload");
 
-  // 10) Random practice puzzles load and differ from the daily one.
+  // 11) Random practice puzzles load and differ from the daily one.
   await page.click("#newBtn");
   const rnd = await page.evaluate(() => window.game._debug.state());
   assert(rnd.id.startsWith("free:5:"), `random puzzle loaded, got ${rnd.id}`);
@@ -160,7 +164,7 @@ async function run() {
   assert((await litPips(page)) === 10, "10 pips lit on a solved 5x5");
   await page.click("#winBack", { position: { x: 5, y: 5 } });
 
-  // 11) The label leads back to today's puzzle.
+  // 12) The label leads back to today's puzzle.
   await page.click("#puzLabel .link");
   const home = await page.evaluate(() => window.game._debug.state());
   assert(home.id.startsWith("daily:5:"), `back on the daily puzzle, got ${home.id}`);

@@ -421,10 +421,9 @@ window.createWordSquare = function (ctx) {
   }
 
   function renderMeta() {
-    var st = read("ws-streak", { count: 0 });
     els.puzLabel.innerHTML = "";
     if (puzzle.kind === "daily") {
-      els.puzLabel.textContent = "Daily · " + puzzle.dateKey + (st.count ? " · 🔥 " + st.count : "");
+      els.puzLabel.textContent = "Daily · " + puzzle.dateKey;
       els.puzLabel.removeAttribute("role");
       els.puzLabel.classList.remove("link");
     } else {
