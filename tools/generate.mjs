@@ -130,18 +130,26 @@ function buildPools() {
     "dunno", "cmon", "yall", "didn", "doesn", "wouldn", "couldn", "shouldn", "hadn", "weren",
     "isn", "wasn", "mustn", "needn", "daren", "shan", "ain"]);
 
+  const clean = (w, n) => w.length === n && /^[a-z]+$/.test(w)
+    && !bad.has(w) && !fragments.has(w);
+
+  // What a typed row or column is CHECKED against: the Scrabble dictionary,
+  // whole. If a board would take it, the grid takes it.
+  const acceptedFor = (n) => [...valid].filter((w) => clean(w, n)).sort();
+
+  // What the puzzles are BUILT from: the common subset. These are not the same
+  // question. A bank generated over the whole Scrabble list would happily deal
+  // a grid spelling QOPH and XYST, which is unsolvable rather than hard. So the
+  // squares stay common and only the accept-check widens.
   const poolFor = (n, maxRank) => {
     const out = [];
     for (const [w, r] of rank) {          // Map keeps insertion order: common first
-      if (w.length !== n || r > maxRank) continue;
-      if (!/^[a-z]+$/.test(w)) continue;
-      if (!valid.has(w)) continue;
-      if (bad.has(w) || fragments.has(w)) continue;
+      if (r > maxRank || !clean(w, n) || !valid.has(w)) continue;
       out.push(w);
     }
     return out;
   };
-  return { poolFor, rank };
+  return { poolFor, acceptedFor, rank };
 }
 
 // ---- the search ------------------------------------------------------------
@@ -222,7 +230,7 @@ function pick(squares, count, rank) {
 
 // ---- main ------------------------------------------------------------------
 await fetchSources();
-const { poolFor, rank } = buildPools();
+const { poolFor, acceptedFor, rank } = buildPools();
 
 // KEEP_BANK rebuilds the dictionary and leaves the puzzles exactly as they are.
 // Widening the dictionary is a bug fix every player wants immediately; new
@@ -245,8 +253,8 @@ for (const { n, mode, maxRank, want, limit, timeMs } of BANKS) {
   const t0 = Date.now();
   if (keepBank) {
     bank[n][mode] = existing[n][mode].map((flat) => flat.match(new RegExp(`.{${n}}`, "g")));
-    if (!dict[n] || words.length > dict[n].length) dict[n] = words;
-    console.log(`${n}x${n} ${mode}: pool ${words.length}, bank kept as is (${bank[n][mode].length} puzzles)`);
+    dict[n] = dict[n] || acceptedFor(n);
+    console.log(`${n}x${n} ${mode}: pool ${words.length}, accepts ${dict[n].length}, bank kept as is (${bank[n][mode].length} puzzles)`);
     continue;
   }
   const { found, seen, timedOut } = search(words, n, { limit, timeMs, keep: KEEP[mode] });
@@ -255,10 +263,9 @@ for (const { n, mode, maxRank, want, limit, timeMs } of BANKS) {
     console.warn(`  warning: wanted ${want} ${n}x${n} ${mode} puzzles, got ${chosen.length}`);
   }
   bank[n][mode] = chosen;
-  // The dictionary for a size has to cover every bank at that size, so keep
-  // the widest pool any of them used.
-  if (!dict[n] || words.length > dict[n].length) dict[n] = words;
-  console.log(`${n}x${n} ${mode}: pool ${words.length}, ${seen} squares seen, ${found.length} ${mode}${timedOut ? " (time-capped)" : ""}, kept ${chosen.length} — ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  // Built from the common pool, checked against the whole Scrabble list.
+  dict[n] = dict[n] || acceptedFor(n);
+  console.log(`${n}x${n} ${mode}: pool ${words.length}, accepts ${dict[n].length}, ${seen} squares seen, ${found.length} ${mode}${timedOut ? " (time-capped)" : ""}, kept ${chosen.length} — ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   console.log("  e.g. " + chosen.slice(0, 2).map((s) => s.join(" ")).join(" | "));
 }
 
@@ -282,10 +289,12 @@ fs.writeFileSync(out, `// GENERATED FILE — do not edit by hand.
 // BANK[n].easy and BANK[n].hard hold solved n x n double word squares, one per
 // string, rows concatenated. Easy squares are mirrored: column k spells the
 // same word as row k. Hard squares are strict: no row matches any column.
-// WORDS[n] is the dictionary a typed row or column is checked against: common
-// English words, with contraction fragments removed. Words that happen to be
-// names (WILL, ROSE, GRACE) are words and are kept; the Scrabble dictionary
-// already excludes actual proper nouns.
+// WORDS[n] is the dictionary a typed row or column is checked against: the
+// Scrabble dictionary at that length, whole, less profanity and contraction
+// fragments. The squares themselves are built from a much smaller pool of
+// common words — what you are dealt and what you may play are different
+// questions. Words that happen to be names (WILL, ROSE, GRACE) are words and
+// are kept; the Scrabble dictionary already excludes actual proper nouns.
 window.WORD_SQUARE_DATA = {
   BANK: {
     4: {

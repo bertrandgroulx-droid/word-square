@@ -100,6 +100,28 @@ async function run() {
     `words that are also names must count: missing ${naming.missing.join(" ")}`);
   assert(naming.present.length === 0,
     `proper nouns must not: found ${naming.present.join(" ")}`);
+
+  // A row is checked against the whole Scrabble dictionary, not the much
+  // smaller pool the squares are built from. The two are different questions:
+  // a bank built over the whole list would deal grids spelling QOPH and XYST.
+  const breadth = await page.evaluate(() => {
+    const d = window.WORD_SQUARE_DATA;
+    const four = new Set(d.WORDS[4]), five = new Set(d.WORDS[5]);
+    return {
+      counts: [d.WORDS[4].length, d.WORDS[5].length],
+      missing: [...["deet", "qoph", "zarf", "xyst", "fyce"].filter((w) => !four.has(w)),
+        ...["zayin", "qophs", "xylyl"].filter((w) => !five.has(w))],
+      // The hand-written exclusions still hold against the wider list.
+      slipped: [...["nazi"].filter((w) => four.has(w)),
+        ...["texas", "turks", "hogan", "moore"].filter((w) => five.has(w))]
+    };
+  });
+  assert(breadth.counts[0] > 3500 && breadth.counts[1] > 8000,
+    `the whole Scrabble list is accepted, got ${breadth.counts.join(" and ")}`);
+  assert(breadth.missing.length === 0,
+    `Scrabble words must count: missing ${breadth.missing.join(" ")}`);
+  assert(breadth.slipped.length === 0,
+    `the curated exclusions still hold: found ${breadth.slipped.join(" ")}`);
   assert(Object.values(bankCheck.counts).every((c) => c >= 50),
     `a bank is too small: ${JSON.stringify(bankCheck.counts)}`);
 
