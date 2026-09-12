@@ -1,11 +1,20 @@
 // Rebuild puzzles.js: fetch the source word lists, search for double word
-// squares, and write the bank plus the dictionary the game validates against.
+// squares, and write the puzzle banks plus the dictionary the game validates
+// against.
 // Run: npm run generate            (needs network; caches downloads in .cache/)
 //
-// A "double word square" is a grid where every row AND every column is a word,
-// and the two sets need not match — HEART across / HEAPS down is fine. They are
-// harder to find than the classic symmetric square, which is why the search
-// below prunes on column prefixes rather than enumerating grids.
+// A "double word square" is a grid where every row AND every column is a word.
+// Two shapes of them matter here, and they are the game's two difficulty levels:
+//
+//   Easy — a MIRRORED square, where column k spells the same word as row k.
+//          Half the grid is a reflection of the other half, so a solved row
+//          hands you a column for free.
+//
+//   Hard — a STRICT square, where no row matches any column. Ten separate words
+//          at 5x5, eight at 4x4, and no reflection to lean on.
+//
+// Strict squares are much rarer than mirrored ones, which is why the hard 5x5
+// search reaches deeper into the frequency list to find enough of them.
 import fs from "node:fs";
 import path from "node:path";
 
@@ -25,14 +34,40 @@ const SOURCES = {
   "names2.txt": "https://raw.githubusercontent.com/smashew/NameDatabases/master/NamesDatabases/first%20names/us.txt"
 };
 
-// Per-size search settings. maxRank caps how obscure a word may be; want is how
-// many puzzles land in the bank.
-const SIZES = [
-  { n: 4, maxRank: 12000, want: 200, timeMs: 60000 },
-  { n: 5, maxRank: 15000, want: 200, timeMs: 180000 }
+// One entry per bank the game loads. maxRank caps how obscure a word may be,
+// want is how many puzzles to keep, and limit stops the search once it has
+// collected that many matching squares to choose between.
+const BANKS = [
+  { n: 4, mode: "easy", maxRank: 12000, want: 200, limit: 40000, timeMs: 60000 },
+  { n: 4, mode: "hard", maxRank: 12000, want: 200, limit: 40000, timeMs: 60000 },
+  { n: 5, mode: "easy", maxRank: 15000, want: 200, limit: 40000, timeMs: 120000 },
+  { n: 5, mode: "hard", maxRank: 30000, want: 200, limit: 40000, timeMs: 300000 }
 ];
 
-const LIMIT = 40000; // stop collecting raw squares past this many
+// Is column k the same word as row k, for every k?
+function isMirrored(sq, n) {
+  const flat = sq.join("");
+  for (let k = 0; k < n; k++) {
+    let col = "";
+    for (let j = 0; j < n; j++) col += flat[j * n + k];
+    if (col !== sq[k]) return false;
+  }
+  return true;
+}
+
+// No row appears anywhere among the columns — not even out of position.
+function isStrict(sq, n) {
+  const flat = sq.join("");
+  const cols = [];
+  for (let k = 0; k < n; k++) {
+    let col = "";
+    for (let j = 0; j < n; j++) col += flat[j * n + k];
+    cols.push(col);
+  }
+  return sq.every((row) => !cols.includes(row));
+}
+
+const KEEP = { easy: isMirrored, hard: isStrict };
 
 async function fetchSources() {
   fs.mkdirSync(CACHE, { recursive: true });
@@ -69,7 +104,7 @@ function buildPools() {
     "rape", "rapes", "raped", "nazi", "nazis", "dead", "died", "dies", "kill", "kills",
     "killed", "guns", "slut", "sluts", "whore"]) bad.add(w);
 
-  // Read off the generated bank and excluded by hand: words that pass every
+  // Read off the generated banks and excluded by hand: words that pass every
   // automatic filter but still read as a proper noun ("texas", "turks"), a
   // foreign borrowing ("casa"), or something you'd rather not stare at in a
   // puzzle. Re-check this list whenever the sources change.
@@ -105,7 +140,9 @@ function buildPools() {
 // ---- the search ------------------------------------------------------------
 // Fill row by row. After i rows, each column holds an i-letter prefix that must
 // still be extendable to a word; on the last row every column must BE a word.
-function search(words, n, { limit, timeMs }) {
+// `keep` decides which finished squares are collected, so the time budget is
+// spent gathering the shape this bank actually wants.
+function search(words, n, { limit, timeMs, keep }) {
   const prefixes = new Set();
   const byFirst = new Map();
   for (const w of words) {
@@ -116,6 +153,7 @@ function search(words, n, { limit, timeMs }) {
   const wordSet = new Set(words);
 
   const found = [];
+  let seen = 0;
   const deadline = Date.now() + timeMs;
   let timedOut = false;
   const rows = [];
@@ -124,7 +162,11 @@ function search(words, n, { limit, timeMs }) {
   function place(i) {
     if (timedOut || found.length >= limit) return;
     if (Date.now() > deadline) { timedOut = true; return; }
-    if (i === n) { found.push(rows.slice()); return; }
+    if (i === n) {
+      seen++;
+      if (keep(rows, n)) found.push(rows.slice());
+      return;
+    }
 
     const last = i === n - 1;
     // Column 0 constrains only the candidate's first letter, so whole
@@ -150,10 +192,10 @@ function search(words, n, { limit, timeMs }) {
     }
   }
   place(0);
-  return { found, timedOut };
+  return { found, seen, timedOut };
 }
 
-// Favour squares built from words people actually know, and keep the bank
+// Favour squares built from words people actually know, and keep each bank
 // varied: no two puzzles may share more than one word.
 function pick(squares, count, rank) {
   const worst = (sq) => Math.max(...sq.map((w) => rank.get(w) || 1e9));
@@ -175,27 +217,33 @@ function pick(squares, count, rank) {
 await fetchSources();
 const { poolFor, rank } = buildPools();
 
-const bank = {};
+const bank = { 4: {}, 5: {} };
 const dict = {};
-for (const { n, maxRank, want, timeMs } of SIZES) {
+for (const { n, mode, maxRank, want, limit, timeMs } of BANKS) {
   const words = poolFor(n, maxRank);
   const t0 = Date.now();
-  const { found, timedOut } = search(words, n, { limit: LIMIT, timeMs });
+  const { found, seen, timedOut } = search(words, n, { limit, timeMs, keep: KEEP[mode] });
   const chosen = pick(found, want, rank);
   if (chosen.length < want) {
-    console.warn(`  warning: wanted ${want} ${n}x${n} puzzles, got ${chosen.length}`);
+    console.warn(`  warning: wanted ${want} ${n}x${n} ${mode} puzzles, got ${chosen.length}`);
   }
-  bank[n] = chosen;
-  dict[n] = words;
-  console.log(`${n}x${n}: pool ${words.length}, found ${found.length}${timedOut ? " (time-capped)" : ""}, kept ${chosen.length} — ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-  console.log("  e.g. " + chosen.slice(0, 3).map((s) => s.join(" ")).join(" | "));
+  bank[n][mode] = chosen;
+  // The dictionary for a size has to cover every bank at that size, so keep
+  // the widest pool any of them used.
+  if (!dict[n] || words.length > dict[n].length) dict[n] = words;
+  console.log(`${n}x${n} ${mode}: pool ${words.length}, ${seen} squares seen, ${found.length} ${mode}${timedOut ? " (time-capped)" : ""}, kept ${chosen.length} — ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  console.log("  e.g. " + chosen.slice(0, 2).map((s) => s.join(" ")).join(" | "));
 }
 
-// A square whose words aren't in the dictionary could never be validated.
-for (const { n } of SIZES) {
+// Guard the two properties the game depends on: every word must be in the
+// dictionary, and every puzzle must have the shape its bank promises.
+for (const { n, mode } of BANKS) {
   const set = new Set(dict[n]);
-  for (const sq of bank[n]) for (const w of sq) {
-    if (!set.has(w)) throw new Error(`${n}x${n} word "${w}" is missing from the dictionary`);
+  for (const sq of bank[n][mode]) {
+    for (const w of sq) {
+      if (!set.has(w)) throw new Error(`${n}x${n} ${mode}: "${w}" is missing from the dictionary`);
+    }
+    if (!KEEP[mode](sq, n)) throw new Error(`${n}x${n} ${mode}: "${sq.join(" ")}" is the wrong shape`);
   }
 }
 
@@ -204,13 +252,21 @@ const out = path.join(ROOT, "puzzles.js");
 fs.writeFileSync(out, `// GENERATED FILE — do not edit by hand.
 // Rebuild with: npm run generate   (see tools/generate.mjs)
 //
-// BANK[n] holds solved n x n double word squares, one per string, rows
-// concatenated. WORDS[n] is the dictionary a typed row or column is checked
-// against: common English words, names and contraction fragments removed.
+// BANK[n].easy and BANK[n].hard hold solved n x n double word squares, one per
+// string, rows concatenated. Easy squares are mirrored: column k spells the
+// same word as row k. Hard squares are strict: no row matches any column.
+// WORDS[n] is the dictionary a typed row or column is checked against: common
+// English words, with names and contraction fragments removed.
 window.WORD_SQUARE_DATA = {
   BANK: {
-    4: "${flat(bank[4])}".split(" "),
-    5: "${flat(bank[5])}".split(" ")
+    4: {
+      easy: "${flat(bank[4].easy)}".split(" "),
+      hard: "${flat(bank[4].hard)}".split(" ")
+    },
+    5: {
+      easy: "${flat(bank[5].easy)}".split(" "),
+      hard: "${flat(bank[5].hard)}".split(" ")
+    }
   },
   WORDS: {
     4: "${dict[4].join(" ")}".split(" "),

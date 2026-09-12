@@ -18,7 +18,8 @@ window.createWordSquare = function (ctx) {
 
   var $ = function (id) { return document.getElementById(id); };
   var els = {
-    size4: $("size4"), size5: $("size5"), helpBtn: $("helpBtn"),
+    size4: $("size4"), size5: $("size5"),
+    modeEasy: $("modeEasy"), modeHard: $("modeHard"), helpBtn: $("helpBtn"),
     puzLabel: $("puzLabel"), timer: $("timer"),
     boardWrap: document.querySelector(".board-wrap"),
     board: $("board"), grid: $("grid"), pipsR: $("pipsR"), pipsB: $("pipsB"),
@@ -36,6 +37,7 @@ window.createWordSquare = function (ctx) {
 
   // ---- state ----
   var n = 4;              // grid size
+  var mode = "easy";      // "easy" (mirrored square) | "hard" (strict square)
   var puzzle = null;      // { id, kind, size, sol, givens, dateKey }
   var cells = [];         // grid letters, "" when empty; length n*n
   var tray = [];          // [{ ch, cell }] — cell is the index it sits in, or -1
@@ -107,24 +109,26 @@ window.createWordSquare = function (ctx) {
     return chosen;
   }
 
-  function makePuzzle(kind, size, index, dateKey) {
-    var bank = BANK[size];
+  function makePuzzle(kind, size, level, index, dateKey) {
+    var bank = BANK[size][level];
     var idx = ((index % bank.length) + bank.length) % bank.length;
     var flat = bank[idx];                       // rows concatenated
     var sol = flat.split("");
-    var id = kind + ":" + size + ":" + (kind === "daily" ? dateKey : idx);
+    // The level is part of the id, so each difficulty keeps its own daily
+    // puzzle and its own saved progress.
+    var id = kind + ":" + size + ":" + level + ":" + (kind === "daily" ? dateKey : idx);
     return {
-      id: id, kind: kind, size: size, index: idx, dateKey: dateKey,
+      id: id, kind: kind, size: size, level: level, index: idx, dateKey: dateKey,
       sol: sol, givens: pickGivens(size, rng(hash32(id)))
     };
   }
 
-  function dailyFor(size, when) {
+  function dailyFor(size, level, when) {
     var d = when || new Date();
-    return makePuzzle("daily", size, dayNumber(d), localDateKey(d));
+    return makePuzzle("daily", size, level, dayNumber(d), localDateKey(d));
   }
-  function randomFor(size) {
-    return makePuzzle("free", size, Math.floor(Math.random() * BANK[size].length), null);
+  function randomFor(size, level) {
+    return makePuzzle("free", size, level, Math.floor(Math.random() * BANK[size][level].length), null);
   }
 
   // ---- storage ---------------------------------------------------------------
@@ -169,6 +173,7 @@ window.createWordSquare = function (ctx) {
   function load(p) {
     puzzle = p;
     n = p.size;
+    mode = p.level;
     cells = p.sol.map(function (ch, i) { return p.givens[i] ? ch : ""; });
     hinted = {};
     hints = 0;
@@ -438,6 +443,8 @@ window.createWordSquare = function (ctx) {
     els.timer.textContent = mmss(elapsed);
     els.size4.classList.toggle("active", n === 4);
     els.size5.classList.toggle("active", n === 5);
+    els.modeEasy.classList.toggle("active", mode === "easy");
+    els.modeHard.classList.toggle("active", mode === "hard");
     els.hintBtn.disabled = done;
     els.clearBtn.disabled = done;
   }
@@ -589,7 +596,12 @@ window.createWordSquare = function (ctx) {
   function setSize(size) {
     if (size === n && puzzle) return;
     write("ws-size", size);
-    load(dailyFor(size));
+    load(dailyFor(size, mode));
+  }
+  function setMode(level) {
+    if (level === mode && puzzle) return;
+    write("ws-mode", level);
+    load(dailyFor(n, level));
   }
 
   function bind() {
@@ -598,12 +610,14 @@ window.createWordSquare = function (ctx) {
     document.addEventListener("keydown", onKey);
     els.size4.addEventListener("click", function () { setSize(4); });
     els.size5.addEventListener("click", function () { setSize(5); });
+    els.modeEasy.addEventListener("click", function () { setMode("easy"); });
+    els.modeHard.addEventListener("click", function () { setMode("hard"); });
     els.hintBtn.addEventListener("click", hint);
     els.shuffleBtn.addEventListener("click", function () { shuffle(tray); renderTray(); });
     els.clearBtn.addEventListener("click", clearAll);
-    els.newBtn.addEventListener("click", function () { load(randomFor(n)); });
+    els.newBtn.addEventListener("click", function () { load(randomFor(n, mode)); });
     els.puzLabel.addEventListener("click", function () {
-      if (puzzle.kind !== "daily") load(dailyFor(n));
+      if (puzzle.kind !== "daily") load(dailyFor(n, mode));
     });
     els.helpBtn.addEventListener("click", function () { els.helpBack.classList.remove("hidden"); });
     els.helpClose.addEventListener("click", function () {
@@ -613,7 +627,7 @@ window.createWordSquare = function (ctx) {
     els.winShare.addEventListener("click", share);
     els.winNext.addEventListener("click", function () {
       els.winBack.classList.add("hidden");
-      load(randomFor(n));
+      load(randomFor(n, mode));
     });
     [els.helpBack, els.winBack].forEach(function (b) {
       b.addEventListener("click", function (e) { if (e.target === b) b.classList.add("hidden"); });
@@ -626,8 +640,9 @@ window.createWordSquare = function (ctx) {
   // ---- start -----------------------------------------------------------------
   function start() {
     n = +read("ws-size", 4) === 5 ? 5 : 4;
+    mode = read("ws-mode", "easy") === "hard" ? "hard" : "easy";
     bind();
-    load(dailyFor(n));
+    load(dailyFor(n, mode));
     if (!read("ws-help-seen", 0)) els.helpBack.classList.remove("hidden");
   }
 
@@ -640,7 +655,7 @@ window.createWordSquare = function (ctx) {
         for (var i = 0; i < n * n; i++) if (!puzzle.givens[i]) place(i, puzzle.sol[i]);
       },
       state: function () {
-        return { n: n, id: puzzle.id, cells: serialize(), done: done, hints: hints };
+        return { n: n, mode: mode, id: puzzle.id, cells: serialize(), done: done, hints: hints };
       }
     }
   };

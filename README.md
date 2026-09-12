@@ -15,6 +15,11 @@ W E S T     The grid starts with a few of those letters filled in.
             The tray holds the rest — no spares, no shortage.
 ```
 
+Mirrored grids, where each column repeats its row, are far easier: solve a row
+and you have a column. Rather than throw them away, the game uses them as the
+Easy setting and says so in the rules. Hard grids have no row in common with any
+column.
+
 ## The puzzle
 
 Each grid is a **double word square**: every row is a word and every column is a
@@ -22,16 +27,21 @@ word, and the two sets don't have to match. They're markedly harder to find than
 the classic symmetric square, which is why the bank is generated offline rather
 than at runtime.
 
+- **Two difficulties, and the difference is real.** *Easy* grids are mirrored:
+  column *k* spells the same word as row *k*, so a solved row hands you a column
+  for free. *Hard* grids are strict, with no row matching any column — eight
+  separate words at 4×4, ten at 5×5, and no reflection to lean on.
 - **Two sizes.** 4×4 opens with 6 letters given and 10 in the tray; 5×5 opens
   with 9 given and 16 in the tray. Every row and column is guaranteed at least
   one given letter, so no line is pure guesswork.
-- **A puzzle a day, at each size**, chosen by your local calendar date, so the
-  grid turns over at your midnight and everyone gets the same one.
+- **A puzzle a day for each of the four combinations**, chosen by your local
+  calendar date, so the grid turns over at your midnight and everyone gets the
+  same one.
 - **Any valid square wins**, not just the stored solution. Rows and columns are
   checked against a dictionary, so a different arrangement that works still
   counts.
-- **200 puzzles per size** in the bank, plus 🎲 for a random practice grid at any
-  time.
+- **200 puzzles per bank**, 800 in total, plus 🎲 for a random practice grid at
+  any time.
 
 ## Playing
 
@@ -79,9 +89,14 @@ It fetches four word lists and combines them into a pool:
 
 The search then fills a grid row by row, pruning on column prefixes: after *i*
 rows, every column holds an *i*-letter prefix that must still be extendable to a
-word, and on the last row every column has to *be* one. Candidate squares are
-ranked so the least common word in a grid is as common as possible, and the bank
-keeps only squares that share at most one word with any other.
+word, and on the last row every column has to *be* one. Finished grids are kept
+only if they match the shape their bank wants, mirrored or strict. Candidates
+are ranked so the least common word in a grid is as common as possible, and each
+bank keeps only squares sharing at most one word with any other.
+
+Strict grids are much rarer than mirrored ones, so the hard 5×5 search reaches
+further down the frequency list to find enough of them. That is the one place
+where difficulty costs you some vocabulary familiarity as well as symmetry.
 
 A short hand-written exclusion list at the top of the generator catches the
 stragglers — words that pass every automatic filter but still read as a proper
@@ -93,9 +108,10 @@ directly rather than pulling in an image library.
 
 ## Testing
 
-A headless smoke test (Playwright) serves the folder, verifies every square in
-the bank really is a double word square, then plays a game: placing, taking
-back, hinting, solving, switching size, reloading, and returning to the daily
+A headless smoke test (Playwright) serves the folder and verifies all 800 stored
+squares: that each really is a double word square, and that each has the shape
+its difficulty promises. It then plays a game: placing, taking back, hinting,
+solving, switching size and difficulty, reloading, and returning to the daily
 puzzle.
 
 ```sh

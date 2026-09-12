@@ -49,28 +49,39 @@ async function run() {
   // 1) The bank itself: every stored square really is a double word square.
   const bankCheck = await page.evaluate(() => {
     const d = window.WORD_SQUARE_DATA;
-    const report = { sizes: {}, problems: [] };
+    const report = { counts: {}, problems: [] };
     for (const n of [4, 5]) {
       const dict = new Set(d.WORDS[n]);
-      const seen = new Set();
-      for (const flat of d.BANK[n]) {
-        if (flat.length !== n * n) { report.problems.push(`${n}: bad length "${flat}"`); continue; }
-        if (seen.has(flat)) report.problems.push(`${n}: duplicate "${flat}"`);
-        seen.add(flat);
-        for (let k = 0; k < n; k++) {
-          let row = "", col = "";
-          for (let j = 0; j < n; j++) { row += flat[k * n + j]; col += flat[j * n + k]; }
-          if (!dict.has(row)) report.problems.push(`${n}: row "${row}" not a word`);
-          if (!dict.has(col)) report.problems.push(`${n}: col "${col}" not a word`);
+      for (const mode of ["easy", "hard"]) {
+        const seen = new Set();
+        for (const flat of d.BANK[n][mode]) {
+          const where = `${n}x${n} ${mode}`;
+          if (flat.length !== n * n) { report.problems.push(`${where}: bad length "${flat}"`); continue; }
+          if (seen.has(flat)) report.problems.push(`${where}: duplicate "${flat}"`);
+          seen.add(flat);
+
+          const rows = [], cols = [];
+          for (let k = 0; k < n; k++) {
+            let row = "", col = "";
+            for (let j = 0; j < n; j++) { row += flat[k * n + j]; col += flat[j * n + k]; }
+            rows.push(row); cols.push(col);
+            if (!dict.has(row)) report.problems.push(`${where}: row "${row}" not a word`);
+            if (!dict.has(col)) report.problems.push(`${where}: col "${col}" not a word`);
+          }
+          // The difficulty IS the shape, so check it rather than trust it.
+          const mirrored = rows.every((r, k) => r === cols[k]);
+          const shares = rows.some((r) => cols.includes(r));
+          if (mode === "easy" && !mirrored) report.problems.push(`easy but not mirrored: "${flat}"`);
+          if (mode === "hard" && shares) report.problems.push(`hard but a row repeats a column: "${flat}"`);
         }
+        report.counts[`${n}${mode}`] = d.BANK[n][mode].length;
       }
-      report.sizes[n] = d.BANK[n].length;
     }
     return report;
   });
   assert(bankCheck.problems.length === 0, "bank problems: " + bankCheck.problems.slice(0, 5).join(" | "));
-  assert(bankCheck.sizes[4] >= 50 && bankCheck.sizes[5] >= 50,
-    `bank too small: ${JSON.stringify(bankCheck.sizes)}`);
+  assert(Object.values(bankCheck.counts).every((c) => c >= 50),
+    `a bank is too small: ${JSON.stringify(bankCheck.counts)}`);
 
   // 2) Help shows on a first visit, and closes.
   assert(await page.$eval("#helpBack", (e) => !e.classList.contains("hidden")), "help opens first time");
@@ -79,6 +90,7 @@ async function run() {
 
   // 3) A fresh 4x4 board: 16 squares, 6 givens, 10 letters in the tray, and
   //    every row and column carries at least one given.
+  assert(await page.$eval("#modeEasy", (e) => e.classList.contains("active")), "opens on Easy");
   assert((await cellText(page)).length === 16, "16 cells");
   assert((await givenCount(page)) === 6, `6 givens, got ${await givenCount(page)}`);
   assert((await freeTiles(page)) === 10, `10 tray tiles, got ${await freeTiles(page)}`);
@@ -142,11 +154,35 @@ async function run() {
   await page.keyboard.press(inTray);
   assert((await freeTiles(page)) === tilesBefore - 1, "typing a tray letter places it");
 
-  // 9) The date label carries the date and nothing else.
+  // 9) Difficulty switches the puzzle and survives a reload.
+  const easyId = await page.evaluate(() => window.game._debug.state().id);
+  await page.click("#modeHard");
+  const hardState = await page.evaluate(() => window.game._debug.state());
+  assert(hardState.mode === "hard", "switched to hard");
+  assert(hardState.id.includes(":hard:"), `hard puzzle id, got ${hardState.id}`);
+  assert(hardState.id !== easyId, "hard is a different puzzle from easy");
+  const hardSolved = await page.evaluate(() => {
+    // The whole point of hard: no row may repeat a column.
+    const n = window.game._debug.state().n;
+    const d = window.WORD_SQUARE_DATA;
+    return d.BANK[n].hard.every((flat) => {
+      const rows = [], cols = [];
+      for (let k = 0; k < n; k++) {
+        let r = "", c = "";
+        for (let j = 0; j < n; j++) { r += flat[k * n + j]; c += flat[j * n + k]; }
+        rows.push(r); cols.push(c);
+      }
+      return !rows.some((r) => cols.includes(r));
+    });
+  });
+  assert(hardSolved, "every hard puzzle at this size is mirror-free");
+  await page.click("#modeEasy");
+
+  // 10) The date label carries the date and nothing else.
   const label = await page.$eval("#puzLabel", (e) => e.textContent);
   assert(/^Daily · \d{4}-\d\d-\d\d$/.test(label), `bare date label, got "${label}"`);
 
-  // 10) Progress survives a reload, and the daily puzzle is the same puzzle.
+  // 11) Progress survives a reload, and the daily puzzle is the same puzzle.
   const midway = await page.evaluate(() => window.game._debug.state());
   await page.reload();
   await page.waitForSelector("#grid .cell");
@@ -155,24 +191,24 @@ async function run() {
   assert(after.cells === midway.cells, "grid restored after reload");
   assert(after.n === 5, "size remembered after reload");
 
-  // 11) Random practice puzzles load and differ from the daily one.
+  // 12) Random practice puzzles load and differ from the daily one.
   await page.click("#newBtn");
   const rnd = await page.evaluate(() => window.game._debug.state());
-  assert(rnd.id.startsWith("free:5:"), `random puzzle loaded, got ${rnd.id}`);
+  assert(rnd.id.startsWith("free:5:easy:"), `random puzzle loaded, got ${rnd.id}`);
   await page.evaluate(() => window.game._debug.solve());
   await page.waitForSelector("#winBack:not(.hidden)", { timeout: 3000 });
   assert((await litPips(page)) === 10, "10 pips lit on a solved 5x5");
   await page.click("#winBack", { position: { x: 5, y: 5 } });
 
-  // 12) The label leads back to today's puzzle.
+  // 13) The label leads back to today's puzzle.
   await page.click("#puzLabel .link");
   const home = await page.evaluate(() => window.game._debug.state());
-  assert(home.id.startsWith("daily:5:"), `back on the daily puzzle, got ${home.id}`);
+  assert(home.id.startsWith("daily:5:easy:"), `back on the daily puzzle, got ${home.id}`);
 
   assert(errors.length === 0, "page errors: " + errors.join(" | "));
   await browser.close();
   server.close();
-  console.log(`PASS — bank ${bankCheck.sizes[4]}x4 + ${bankCheck.sizes[5]}x5 verified, play/hint/solve/reload OK`);
+  console.log(`PASS — banks ${JSON.stringify(bankCheck.counts)} verified, play/hint/solve/difficulty/reload OK`);
 }
 
 run().catch((err) => { console.error("FAIL —", err.message); process.exit(1); });
