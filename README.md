@@ -85,7 +85,6 @@ It fetches four word lists and combines them into a pool:
 | [TWL Scrabble dictionary](https://github.com/redbo/scrabble) | What counts as a word. Scrabble lists carry no proper nouns, so `MOORE` can't sneak in |
 | [OpenSubtitles frequency list](https://github.com/hermitdave/FrequencyWords) | Which of those words a player is likely to know |
 | [LDNOOBW](https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words) | Profanity, filtered out |
-| [First-name databases](https://github.com/smashew/NameDatabases) | Names, filtered out — a subtitle corpus is full of them |
 
 The search then fills a grid row by row, pruning on column prefixes: after *i*
 rows, every column holds an *i*-letter prefix that must still be extendable to a
@@ -102,6 +101,18 @@ A short hand-written exclusion list at the top of the generator catches the
 stragglers — words that pass every automatic filter but still read as a proper
 noun or as something you'd rather not stare at. Re-check it if you change the
 sources.
+
+There is deliberately **no first-names filter**. An early version had one and it
+threw hundreds of ordinary words out of the dictionary, `WILL` `ROSE` `GRACE`
+`HOPE` `DAWN` `JACK` among them, so a player who wrote one across a row was told
+it wasn't a word. It was redundant as well as harmful: a Scrabble dictionary
+holds no proper nouns, so `HELEN` and `SANTA` are already absent while `WILL`
+and `ROSE` are correctly present. The test pins both directions.
+
+`KEEP_BANK=1 npm run generate` rebuilds the dictionary and leaves the puzzles
+exactly as they are, which is how that fix shipped: widening the dictionary is
+something every player wants immediately, while new puzzles would change today's
+daily under anyone half way through solving it.
 
 The icons are generated too, by `tools/make-icons.mjs`, which writes the PNGs
 and the `.ico` byte by byte rather than pulling in an image library.

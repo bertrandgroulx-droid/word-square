@@ -81,6 +81,25 @@ async function run() {
     return report;
   });
   assert(bankCheck.problems.length === 0, "bank problems: " + bankCheck.problems.slice(0, 5).join(" | "));
+
+  // Words that are also somebody's name are still words. A first-names filter
+  // once threw hundreds of them out of the dictionary, so a player who wrote
+  // WILL across a row was told it wasn't a word. Pinned in both directions.
+  const naming = await page.evaluate(() => {
+    const d = window.WORD_SQUARE_DATA;
+    const four = new Set(d.WORDS[4]), five = new Set(d.WORDS[5]);
+    return {
+      missing: [...["will", "bill", "mark", "rose", "hope", "dawn", "jack", "gene"].filter((w) => !four.has(w)),
+        ...["grace", "faith", "chase", "brook", "olive", "pearl", "robin", "amber"].filter((w) => !five.has(w))],
+      // Actual proper nouns: the Scrabble dictionary keeps these out by itself.
+      present: [...["dave", "erik"].filter((w) => four.has(w)),
+        ...["helen", "santa", "jesus"].filter((w) => five.has(w))]
+    };
+  });
+  assert(naming.missing.length === 0,
+    `words that are also names must count: missing ${naming.missing.join(" ")}`);
+  assert(naming.present.length === 0,
+    `proper nouns must not: found ${naming.present.join(" ")}`);
   assert(Object.values(bankCheck.counts).every((c) => c >= 50),
     `a bank is too small: ${JSON.stringify(bankCheck.counts)}`);
 

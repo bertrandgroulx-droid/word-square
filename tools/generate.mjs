@@ -87,6 +87,12 @@ const lines = (s) => s.split("\n").map((w) => w.trim().toLowerCase()).filter(Boo
 
 // ---- the word pool ---------------------------------------------------------
 function buildPools() {
+  // There is deliberately NO first-names filter. An early version had one and
+  // it threw away hundreds of ordinary words, WILL ROSE GRACE HOPE DAWN MAY
+  // JACK among them, because thousands of English words are also somebody's
+  // name. A player hit it in the sister game and was right to. It was redundant
+  // as well as harmful: a Scrabble dictionary holds no proper nouns, so HELEN
+  // and SANTA are already absent while WILL and ROSE are correctly present.
   const valid = new Set(lines(readCache("twl.txt")));
 
   const rank = new Map(); // word -> 1-based frequency rank
@@ -110,10 +116,11 @@ function buildPools() {
   // puzzle. Re-check this list whenever the sources change.
   for (const w of ["casa", "homo", "piss", "shag", "psst", "shaw", "kane", "scum",
     "bubba", "burke", "hogan", "liang", "texas", "turks", "costa", "welsh", "trump",
-    "pasha", "senor", "sarge", "takin", "prick", "urine", "asses", "slave"]) bad.add(w);
-
-  // A frequency list built from subtitles is full of first names.
-  const names = new Set([...lines(readCache("names1.txt")), ...lines(readCache("names2.txt"))]);
+    "pasha", "senor", "sarge", "takin", "prick", "urine", "asses", "slave",
+    // Only ever excluded as a side effect of the first-names filter. Dropping
+    // that filter lets them back, so name them properly.
+    "fanny", "fannies", "randy", "dong", "dongs", "johnson", "johnsons",
+    "sissy", "sissies", "cissy", "pooh"]) bad.add(w);
 
   // The same corpus writes contractions without the apostrophe, and some of
   // those fragments are in the dictionary as archaic or dialect words.
@@ -129,7 +136,7 @@ function buildPools() {
       if (w.length !== n || r > maxRank) continue;
       if (!/^[a-z]+$/.test(w)) continue;
       if (!valid.has(w)) continue;
-      if (bad.has(w) || names.has(w) || fragments.has(w)) continue;
+      if (bad.has(w) || fragments.has(w)) continue;
       out.push(w);
     }
     return out;
@@ -217,11 +224,31 @@ function pick(squares, count, rank) {
 await fetchSources();
 const { poolFor, rank } = buildPools();
 
+// KEEP_BANK rebuilds the dictionary and leaves the puzzles exactly as they are.
+// Widening the dictionary is a bug fix every player wants immediately; new
+// puzzles would change today's daily under anyone half way through it. The two
+// deserve to ship separately.
+const keepBank = process.env.KEEP_BANK === "1";
+const existing = keepBank
+  ? (() => {
+      const src = fs.readFileSync(path.join(ROOT, "puzzles.js"), "utf8");
+      const sandbox = { window: {} };
+      new Function("window", src.replace("window.WORD_SQUARE_DATA", "window.WORD_SQUARE_DATA"))(sandbox.window);
+      return sandbox.window.WORD_SQUARE_DATA.BANK;
+    })()
+  : null;
+
 const bank = { 4: {}, 5: {} };
 const dict = {};
 for (const { n, mode, maxRank, want, limit, timeMs } of BANKS) {
   const words = poolFor(n, maxRank);
   const t0 = Date.now();
+  if (keepBank) {
+    bank[n][mode] = existing[n][mode].map((flat) => flat.match(new RegExp(`.{${n}}`, "g")));
+    if (!dict[n] || words.length > dict[n].length) dict[n] = words;
+    console.log(`${n}x${n} ${mode}: pool ${words.length}, bank kept as is (${bank[n][mode].length} puzzles)`);
+    continue;
+  }
   const { found, seen, timedOut } = search(words, n, { limit, timeMs, keep: KEEP[mode] });
   const chosen = pick(found, want, rank);
   if (chosen.length < want) {
@@ -256,7 +283,9 @@ fs.writeFileSync(out, `// GENERATED FILE — do not edit by hand.
 // string, rows concatenated. Easy squares are mirrored: column k spells the
 // same word as row k. Hard squares are strict: no row matches any column.
 // WORDS[n] is the dictionary a typed row or column is checked against: common
-// English words, with names and contraction fragments removed.
+// English words, with contraction fragments removed. Words that happen to be
+// names (WILL, ROSE, GRACE) are words and are kept; the Scrabble dictionary
+// already excludes actual proper nouns.
 window.WORD_SQUARE_DATA = {
   BANK: {
     4: {
@@ -274,4 +303,5 @@ window.WORD_SQUARE_DATA = {
   }
 };
 `);
-console.log(`wrote puzzles.js — ${(fs.statSync(out).size / 1024).toFixed(1)} KB`);
+console.log(`wrote puzzles.js — ${(fs.statSync(out).size / 1024).toFixed(1)} KB` +
+  (keepBank ? " (dictionary only; puzzles untouched)" : ""));
