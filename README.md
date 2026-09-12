@@ -104,7 +104,14 @@ noun or as something you'd rather not stare at. Re-check it if you change the
 sources.
 
 The icons are generated too, by `tools/make-icons.mjs`, which writes the PNGs
-directly rather than pulling in an image library.
+and the `.ico` byte by byte rather than pulling in an image library.
+
+The icon set is deliberately broad. Every GitHub Pages project under one account
+shares a single origin, and browsers tend to cache one bookmark icon per origin,
+so an app that declares only an SVG can end up wearing a neighbouring app's
+icon. Declaring the PNG and `.ico` forms Safari actually reads makes that less
+likely. It cannot rule it out: the only complete fix is giving each app its own
+domain.
 
 ## Testing
 
@@ -130,6 +137,6 @@ and the game is served at `https://<your-username>.github.io/word-square/`.
 
 ## Add to Home Screen
 
-The app ships an `apple-touch-icon` and a web manifest, so on iOS
-(Share → *Add to Home Screen*) it gets an icon and launches full-screen.
-Installable on Android too.
+The app ships `apple-touch-icon` images at every iPhone and iPad size plus a web
+manifest, so on iOS (Share → *Add to Home Screen*) it gets a crisp icon and
+launches full-screen. Installable on Android too.

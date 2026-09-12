@@ -110,11 +110,46 @@ function render(size) {
   return png(size, size, buf);
 }
 
-for (const size of [32, 180, 192, 512]) {
+// 120/152/167 are the iPad and older-iPhone home-screen sizes. 48 isn't here:
+// it exists only inside favicon.ico, so it needs no file of its own.
+for (const size of [32, 120, 152, 167, 180, 192, 512]) {
   const file = `${OUT}icon-${size}.png`;
   fs.writeFileSync(file, render(size));
   console.log(`${file} — ${(fs.statSync(file).size / 1024).toFixed(1)} KB`);
 }
+
+// ---- favicon.ico -----------------------------------------------------------
+// Safari reaches for a .ico when picking a bookmark icon and skips SVG, so ship
+// one. An .ico is just a small directory followed by the images; PNG payloads
+// are allowed, so the renders above go in as-is.
+function ico(sizes) {
+  const images = sizes.map((s) => ({ size: s, data: render(s) }));
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0);              // reserved
+  header.writeUInt16LE(1, 2);              // 1 = icon
+  header.writeUInt16LE(images.length, 4);
+
+  const dir = Buffer.alloc(16 * images.length);
+  let offset = header.length + dir.length;
+  images.forEach((img, i) => {
+    const at = i * 16;
+    dir[at] = img.size >= 256 ? 0 : img.size;      // 0 means 256
+    dir[at + 1] = img.size >= 256 ? 0 : img.size;
+    dir[at + 2] = 0;                                // palette size
+    dir[at + 3] = 0;                                // reserved
+    dir.writeUInt16LE(1, at + 4);                   // colour planes
+    dir.writeUInt16LE(32, at + 6);                  // bits per pixel
+    dir.writeUInt32LE(img.data.length, at + 8);
+    dir.writeUInt32LE(offset, at + 12);
+    offset += img.data.length;
+  });
+
+  return Buffer.concat([header, dir, ...images.map((i) => i.data)]);
+}
+
+const icoFile = OUT + "favicon.ico";
+fs.writeFileSync(icoFile, ico([32, 48]));
+console.log(`${icoFile} — ${(fs.statSync(icoFile).size / 1024).toFixed(1)} KB`);
 
 // The favicon is the same mark as scalable SVG.
 const pad = 15, gap = 5.5, tile = (100 - 2 * pad - 2 * gap) / 3;
