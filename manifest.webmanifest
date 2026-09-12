@@ -1,0 +1,16 @@
+{
+  "name": "Word Square",
+  "short_name": "Word Square",
+  "description": "A daily word puzzle: fill the grid so every row and every column spells a word.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#12102a",
+  "theme_color": "#12102a",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
