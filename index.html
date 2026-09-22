@@ -105,6 +105,11 @@
   }
 
   /* ---------------- meta line ---------------- */
+  /* The studio credit is inserted right after .puz, which would otherwise make
+     this a three-item space-between row and strand it in the middle. Pushing
+     the auto margin onto the credit keeps it next to the date and the timer at
+     the far end, as before. */
+  .meta #shozkit-bar { margin-right: auto; }
   .meta {
     display: flex; align-items: center; gap: 10px; flex: none;
     font-size: 0.8rem; color: var(--muted);
@@ -327,10 +332,11 @@
 
 <!-- The shozbot studio kit: the "back to shozbot" bar at the top, and visitor
      counting. One line, so both are changed in one place rather than seven. -->
-<!-- data-hide-standalone: installed to a home screen there is no browser to go
-     back to, and this game is built to fill exactly one phone screen — so the
-     bar drops out there and the layout is the same as it ever was. -->
-<script src="https://shozbot.com/kit/kit.js" data-app="Word Square"
-        data-hide-standalone defer></script>
+<!-- The studio kit. data-by replaces the bar with the words "by shozbot".
+     Not under the app's name, as the other games have it: the rule up in the
+     <head> says the wordmark is the first thing to go when the two segmented
+     controls need the room, and on a phone it is already gone. So the credit
+     rides the line below instead, beside the puzzle's date. -->
+<script src="https://shozbot.com/kit/kit.js" data-by=".meta .puz" defer></script>
 </body>
 </html>
