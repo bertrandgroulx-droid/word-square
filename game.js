@@ -1,11 +1,24 @@
 // Word Square — game module.
 // A factory: index.html calls createWordSquare(ctx).start().
-// ctx = { data, storage }, where data is the generated puzzles.js payload.
+// ctx = { data, storage, now }, where data is the generated puzzles.js payload,
+// storage is localStorage, and now (optional, for tests) returns the current
+// Date. Needs shozbot-daily.js loaded first: it defines window.ShozDaily.
 window.createWordSquare = function (ctx) {
   "use strict";
 
   var BANK = ctx.data.BANK;
   var store = ctx.storage;
+
+  // The daily puzzle's settings. One puzzle a day, the same for everyone, at
+  // this size and level; every other size and level is a random puzzle.
+  var DEFAULT = { size: 4, level: "easy" };
+
+  // The shared studio kit: which day it is and its number, the day's seed, one
+  // saved record per day with the first score kept, the streak, the standard
+  // wording and the share text. Everything it saves sits under "wordsquare:".
+  var daily = window.ShozDaily.create({
+    game: "word-square", title: "Word Square", storage: store, now: ctx.now
+  });
 
   // ---- tunables ----
   var CONFIG = {
@@ -20,15 +33,17 @@ window.createWordSquare = function (ctx) {
   var els = {
     size4: $("size4"), size5: $("size5"),
     modeEasy: $("modeEasy"), modeHard: $("modeHard"), helpBtn: $("helpBtn"),
-    puzLabel: $("puzLabel"), timer: $("timer"),
+    puzLabel: $("puzLabel"), dailyLinks: $("dailyLinks"), timer: $("timer"),
     boardWrap: document.querySelector(".board-wrap"),
     board: $("board"), grid: $("grid"), pipsR: $("pipsR"), pipsB: $("pipsB"),
     tray: $("tray"),
     hintBtn: $("hintBtn"), shuffleBtn: $("shuffleBtn"), clearBtn: $("clearBtn"), newBtn: $("newBtn"),
     helpBack: $("helpBack"), helpClose: $("helpClose"),
-    winBack: $("winBack"), winSub: $("winSub"), winTime: $("winTime"),
-    winHints: $("winHints"), winStreak: $("winStreak"), winWords: $("winWords"),
-    winShare: $("winShare"), winNext: $("winNext"),
+    winBack: $("winBack"), winSub: $("winSub"), winScore: $("winScore"), winVerdict: $("winVerdict"),
+    winStreak: $("winStreak"), winSaved: $("winSaved"), winStats: $("winStats"),
+    winTime: $("winTime"), winHints: $("winHints"), winWords: $("winWords"),
+    winRandom: $("winRandom"), winShare: $("winShare"), winPast: $("winPast"), winAgain: $("winAgain"),
+    pastBack: $("pastBack"), pastList: $("pastList"), pastClose: $("pastClose"),
     toast: $("toast")
   };
 
@@ -38,10 +53,10 @@ window.createWordSquare = function (ctx) {
   // ---- state ----
   var n = 4;              // grid size
   var mode = "easy";      // "easy" (mirrored square) | "hard" (strict square)
-  var puzzle = null;      // { id, kind, size, sol, givens, dateKey }
+  var puzzle = null;      // { id, kind, size, level, index, sol, givens, dateKey, meta }
   var cells = [];         // grid letters, "" when empty; length n*n
   var tray = [];          // [{ ch, cell }] — cell is the index it sits in, or -1
-  var hinted = {};        // cell index -> true, for the share grid
+  var hinted = {};        // cell index -> true, for the score and the share grid
   var sel = 0;            // selected cell index
   var dir = "across";     // typing direction
   var hints = 0;
@@ -50,6 +65,7 @@ window.createWordSquare = function (ctx) {
   var done = false;
   var tickId = null;
   var toastId = null;
+  var shown = null;       // the results on screen, for Share
 
   // ---- seeded randomness -----------------------------------------------------
   // The same puzzle must lay out the same way on every device and every reload,
@@ -79,18 +95,13 @@ window.createWordSquare = function (ctx) {
     }
     return arr;
   }
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
 
   // ---- puzzle construction ---------------------------------------------------
-  function localDateKey(d) {
-    var p = function (x) { return String(x).padStart(2, "0"); };
-    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
-  }
-  function dayNumber(d) {
-    // Count calendar days off the LOCAL date, so the puzzle turns over at local
-    // midnight and stays monotonic across new year.
-    return Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
-  }
-
   // Pick the cells that start filled. Every row and every column gets at least
   // one, otherwise a line would be pure guesswork: take a random permutation for
   // that guaranteed cover, then sprinkle the rest.
@@ -114,8 +125,6 @@ window.createWordSquare = function (ctx) {
     var idx = ((index % bank.length) + bank.length) % bank.length;
     var flat = bank[idx];                       // rows concatenated
     var sol = flat.split("");
-    // The level is part of the id, so each difficulty keeps its own daily
-    // puzzle and its own saved progress.
     var id = kind + ":" + size + ":" + level + ":" + (kind === "daily" ? dateKey : idx);
     return {
       id: id, kind: kind, size: size, level: level, index: idx, dateKey: dateKey,
@@ -123,25 +132,38 @@ window.createWordSquare = function (ctx) {
     };
   }
 
-  function dailyFor(size, level, when) {
-    var d = when || new Date();
-    return makePuzzle("daily", size, level, dayNumber(d), localDateKey(d));
+  // Which grid is the day's. The bank is shuffled once per year with a seed
+  // from the game's name and the year, and the day of the year walks that
+  // order — so the same grid cannot come round again inside 200 days, which a
+  // draw straight from the day's own seed could not promise with a bank this
+  // size. Deterministic, so everyone gets the same one.
+  function dailyIndex(size, level, meta) {
+    var bank = BANK[size][level], order = [];
+    for (var i = 0; i < bank.length; i++) order.push(i);
+    var seed = daily.hash32("word-square:" + size + ":" + level + ":" + meta.date.getFullYear());
+    order = daily.shuffle(order, daily.rng(seed));
+    return order[(meta.number - 1) % bank.length];
+  }
+  function dailyFor(meta) {
+    var p = makePuzzle("daily", DEFAULT.size, DEFAULT.level, dailyIndex(DEFAULT.size, DEFAULT.level, meta), meta.iso);
+    p.meta = meta;
+    return p;
   }
   function randomFor(size, level) {
     return makePuzzle("free", size, level, Math.floor(Math.random() * BANK[size][level].length), null);
   }
 
   // ---- storage ---------------------------------------------------------------
-  function read(key, fallback) {
-    try {
-      var raw = store.getItem(key);
-      return raw ? JSON.parse(raw) : fallback;
-    } catch (e) { return fallback; }
+  // Everything sits under the kit's "wordsquare:" prefix, because every app on
+  // shozbot.com shares one origin. The kit owns "daily:<date>"; the game adds
+  // "size" and "mode" (the last settings chosen for random puzzles),
+  // "help-seen", and "p:<puzzle id>" for a grid in progress.
+  function read(key, fallback) { return daily.read(key, fallback); }
+  function write(key, val) { daily.write(key, val); }
+  function remove(key) {
+    try { store.removeItem(daily.store + key); } catch (e) { /* private mode */ }
   }
-  function write(key, val) {
-    try { store.setItem(key, JSON.stringify(val)); } catch (e) { /* private mode */ }
-  }
-  function progressKey(p) { return "ws-p:" + p.id; }
+  function progressKey(p) { return "p:" + p.id; }
 
   // Empty squares have to occupy a character, or the saved string stops lining
   // up with the grid it came from.
@@ -157,16 +179,66 @@ window.createWordSquare = function (ctx) {
     });
   }
 
-  function bumpStreak(dateKey) {
-    var st = read("ws-streak", { count: 0, last: null, best: 0 });
-    if (st.last === dateKey) return st;                     // already counted today
-    var y = new Date(dateKey + "T12:00:00");
-    y.setDate(y.getDate() - 1);
-    st.count = st.last === localDateKey(y) ? st.count + 1 : 1;
-    st.last = dateKey;
-    st.best = Math.max(st.best || 0, st.count);
-    write("ws-streak", st);
-    return st;
+  // ---- what the game used to save --------------------------------------------
+  // Until 2026-10-12 there was a daily at every size and level, keyed by the
+  // local date, with progress at "ws-p:<id>" and a streak at "ws-streak" that
+  // counted a solve at any of the four. The kit keeps one record per day
+  // instead. This runs once: it writes a record for every day the old streak
+  // covered and for every finished daily still on the device, carries the
+  // settings across, then clears the old keys so nothing is read twice.
+  function readOld(key) {
+    try { var raw = store.getItem(key); return raw ? JSON.parse(raw) : null; } catch (e) { return null; }
+  }
+  // How the old game chose a day's puzzle: days since the epoch, around the bank.
+  function legacyPuzzle(size, level, isoDate) {
+    var d = daily.parseIso(isoDate);
+    if (!d) return null;
+    var index = Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
+    return makePuzzle("daily", size, level, index, isoDate);
+  }
+  // The record for a day the old game counted: the full score where the finished
+  // 4×4 Easy grid is still saved, otherwise only that it was solved.
+  function legacyRecord(isoDate) {
+    var saved = readOld("ws-p:daily:" + DEFAULT.size + ":" + DEFAULT.level + ":" + isoDate);
+    var p = saved && saved.done && saved.cells ? legacyPuzzle(DEFAULT.size, DEFAULT.level, isoDate) : null;
+    if (!p || saved.cells.length !== p.size * p.size) {
+      return { score: null, max: null, results: [], recap: { migrated: true } };
+    }
+    var h = {};
+    (saved.hinted || []).forEach(function (i) { h[i] = true; });
+    return tally(p, saved.cells.split(""), h, saved.hints || 0, saved.elapsed || 0);
+  }
+  function migrate() {
+    var old = [], i, k;
+    try {
+      for (i = 0; i < store.length; i++) { k = store.key(i); if (k && k.indexOf("ws-") === 0) old.push(k); }
+    } catch (e) { return; }
+    if (!old.length) return;
+
+    var size = readOld("ws-size"), level = readOld("ws-mode");
+    if (size === 4 || size === 5) write("size", size);
+    if (level === "easy" || level === "hard") write("mode", level);
+    if (readOld("ws-help-seen")) write("help-seen", 1);
+    // Prove the new keys take before the old ones go, or a blocked store would
+    // lose a streak rather than carry it.
+    write("migrated", 1);
+    if (read("migrated", 0) !== 1) return;
+
+    // The streak: a record for each of its days, ending on the day it last counted.
+    var st = readOld("ws-streak");
+    var last = st && st.last ? daily.parseIso(st.last) : null;
+    for (i = 0; last && i < (st.count || 0); i++) {
+      var m = daily.metaFor(daily.addDays(last, -i));
+      daily.save(m, legacyRecord(m.iso));
+    }
+    // Any other finished daily still on the device, at any size and level.
+    old.forEach(function (key) {
+      var mm = /^ws-p:daily:\d:\w+:(\d{4}-\d\d-\d\d)$/.exec(key);
+      var saved = mm ? readOld(key) : null;
+      var d = saved && saved.done ? daily.parseIso(mm[1]) : null;
+      if (d && d <= daily.today()) daily.save(daily.metaFor(d), legacyRecord(mm[1]));
+    });
+    old.forEach(function (key) { try { store.removeItem(key); } catch (e) { /* ignore */ } });
   }
 
   // ---- loading a puzzle ------------------------------------------------------
@@ -221,6 +293,60 @@ window.createWordSquare = function (ctx) {
     return null;
   }
 
+  // ---- where to go: today, a past day, random ---------------------------------
+  // The address says which puzzle is showing, so a day can be linked and a
+  // reload comes back to the same place: "?daily=2026-10-12", "?past",
+  // "?practice", and nothing at all for today's.
+  function todayIso() { return daily.iso(daily.today()); }
+  function setUrl(q) {
+    try { history.replaceState(null, "", q || location.pathname); } catch (e) { /* file:// */ }
+  }
+  function urlFor(p) {
+    if (!p) return "";
+    if (p.kind !== "daily") return "?practice";
+    return p.meta.iso === todayIso() ? "" : "?daily=" + p.meta.iso;
+  }
+
+  // A day that has already been played opens on its results; Play it again
+  // starts it over. opts.quiet loads the board without the results on top.
+  function openDate(isoDate, opts) {
+    var d = daily.parseIso(isoDate);
+    if (!d) return openToday();
+    if (d > daily.today()) { openToday({ quiet: true }); return showPast(); }
+    var meta = daily.metaFor(d);
+    closeAll();
+    load(dailyFor(meta));
+    setUrl(urlFor(puzzle));
+    var r = daily.record(meta.iso);
+    if (r && !(opts && opts.quiet)) showResults(fromRecord(meta, r));
+  }
+  function openToday(opts) { openDate(todayIso(), opts); }
+
+  function startRandom(size, level) {
+    closeAll();
+    load(randomFor(size, level));
+    setUrl("?practice");
+  }
+
+  // Play it again: the kept score stays; the grid starts over.
+  function replay() {
+    closeAll();
+    remove(progressKey(puzzle));
+    load(puzzle.kind === "daily" ? dailyFor(puzzle.meta) : puzzle);
+  }
+
+  function route() {
+    var q = new URLSearchParams(location.search);
+    if (q.has("practice")) {
+      var size = +read("size", DEFAULT.size) === 5 ? 5 : 4;
+      var level = read("mode", DEFAULT.level) === "hard" ? "hard" : "easy";
+      return startRandom(size, level);
+    }
+    if (q.has("past")) { openToday({ quiet: true }); return showPast(); }
+    if (q.get("daily")) return openDate(q.get("daily"));
+    openToday();
+  }
+
   // ---- placing and clearing --------------------------------------------------
   function place(i, ch) {
     if (done || puzzle.givens[i]) return false;
@@ -263,16 +389,13 @@ window.createWordSquare = function (ctx) {
   }
 
   // ---- reading the grid ------------------------------------------------------
-  function rowStr(r) {
+  function lineOf(grid, size, k, across) {
     var s = "";
-    for (var c = 0; c < n; c++) s += cells[r * n + c] || " ";
+    for (var j = 0; j < size; j++) s += grid[across ? k * size + j : j * size + k] || " ";
     return s;
   }
-  function colStr(c) {
-    var s = "";
-    for (var r = 0; r < n; r++) s += cells[r * n + c] || " ";
-    return s;
-  }
+  function rowStr(r) { return lineOf(cells, n, r, true); }
+  function colStr(c) { return lineOf(cells, n, c, false); }
   function isWord(s) { return s.indexOf(" ") < 0 && DICT[n].has(s); }
 
   function isSolved() {
@@ -425,21 +548,20 @@ window.createWordSquare = function (ctx) {
     });
   }
 
+  // The daily line: what is showing, and links to the other two places to go.
+  var PLACES = {
+    today: ["Today’s puzzle", "./", function () { openToday(); }],
+    past: ["Past puzzles", "?past", function () { showPast(); }],
+    random: ["Random puzzles", "?practice", function () { startRandom(n, mode); }]
+  };
   function renderMeta() {
-    els.puzLabel.innerHTML = "";
-    if (puzzle.kind === "daily") {
-      els.puzLabel.textContent = "Daily · " + puzzle.dateKey;
-      els.puzLabel.removeAttribute("role");
-      els.puzLabel.classList.remove("link");
-    } else {
-      // Practice puzzles need a way home, or the daily one is stranded.
-      els.puzLabel.textContent = "Practice #" + (puzzle.index + 1) + " · ";
-      var a = document.createElement("span");
-      a.className = "link";
-      a.textContent = "back to daily";
-      els.puzLabel.appendChild(a);
-      els.puzLabel.setAttribute("role", "button");
-    }
+    var isDaily = puzzle.kind === "daily";
+    els.puzLabel.innerHTML = isDaily
+      ? "<b>Daily No. " + puzzle.meta.number + "</b> · " + esc(daily.fmtShort(puzzle.meta.date))
+      : "<b>Random puzzles</b> · #" + (puzzle.index + 1);
+    els.dailyLinks.innerHTML = (isDaily ? ["past", "random"] : ["today", "past"]).map(function (k) {
+      return '<a href="' + PLACES[k][1] + '" data-go="' + k + '">' + PLACES[k][0] + "</a>";
+    }).join("");
     els.timer.textContent = mmss(elapsed);
     els.size4.classList.toggle("active", n === 4);
     els.size5.classList.toggle("active", n === 5);
@@ -480,6 +602,48 @@ window.createWordSquare = function (ctx) {
     }, 1000);
   }
 
+  // ---- scoring ---------------------------------------------------------------
+  // What a finished grid scores: a point for every letter you placed yourself.
+  // The tray letters are the most there is — 10 at 4×4, 16 at 5×5 — and a hint
+  // costs the point for its square. The recap holds what the results screen
+  // shows again later: the time, the hints, the words, and the share grid.
+  function tally(p, grid, hintedCells, hintCount, seconds) {
+    var size = p.size, results = [], score = 0, rows = [], words = [], seen = {}, i;
+    for (i = 0; i < size * size; i++) {
+      if (p.givens[i]) continue;
+      var pt = hintedCells[i] ? 0 : 1;
+      results.push(pt);
+      score += pt;
+    }
+    for (var r = 0; r < size; r++) {
+      var row = "";
+      for (var c = 0; c < size; c++) {
+        i = r * size + c;
+        row += p.givens[i] ? "🟦" : hintedCells[i] ? "🟨" : "🟩";
+      }
+      rows.push(row);
+    }
+    for (var k = 0; k < size; k++) {
+      // Some squares read the same down as across; show each word once.
+      [lineOf(grid, size, k, true), lineOf(grid, size, k, false)].forEach(function (w) {
+        if (!seen[w]) { seen[w] = true; words.push(w); }
+      });
+    }
+    return {
+      score: score, max: results.length, results: results,
+      recap: { time: seconds, hints: hintCount, words: words, squares: rows.join("\n") }
+    };
+  }
+  function boardResults() {
+    var res = tally(puzzle, cells, hinted, hints, elapsed);
+    res.meta = puzzle.meta || null;
+    res.first = false;
+    return res;
+  }
+  function fromRecord(meta, r) {
+    return { meta: meta, first: false, score: r.score, max: r.max, results: r.results, recap: r.recap || {} };
+  }
+
   // ---- winning ---------------------------------------------------------------
   function win() {
     if (done) return;
@@ -487,69 +651,101 @@ window.createWordSquare = function (ctx) {
     running = false;
     saveProgress();
 
-    var st = puzzle.kind === "daily" ? bumpStreak(puzzle.dateKey) : read("ws-streak", { count: 0 });
-    els.winSub.textContent = puzzle.kind === "daily"
-      ? "Daily puzzle · " + puzzle.dateKey
-      : "Practice puzzle #" + (puzzle.index + 1);
-    els.winTime.textContent = mmss(elapsed);
-    els.winHints.textContent = String(hints);
-    els.winStreak.textContent = String(st.count || 0);
+    var res = boardResults();
+    if (puzzle.kind === "daily") res.first = daily.save(puzzle.meta, res).first;
+    renderAll();
+    setTimeout(function () { showResults(res); }, 260);
+  }
 
+  // The results, in the order every Shozbot daily uses: the score, a verdict,
+  // the streak when there is one, whether it was saved, then the game's own
+  // time, hints and words, then the ways on.
+  function showResults(res) {
+    var meta = res.meta, isDaily = !!(meta && meta.mode === "daily");
+    var isToday = isDaily && meta.iso === todayIso();
+    var recap = res.recap || {};
+    var bare = res.max === null || res.max === undefined;   // migrated: solved, score unknown
+    shown = res;
+
+    els.winSub.textContent = isDaily ? daily.label(meta) : "Random puzzle";
+    els.winScore.innerHTML = bare ? "Solved" : res.score + " <small>/ " + res.max + "</small>";
+    els.winVerdict.textContent = bare ? "Solved before scores were kept." : daily.verdict(res.score, res.max, meta);
+    var run = isToday ? daily.streakLine() : "";
+    els.winStreak.textContent = run;
+    els.winStreak.classList.toggle("hidden", !run);
+    els.winSaved.textContent = daily.savedLine(meta, res.first);
+    els.winSaved.classList.toggle("first", isDaily && !!res.first);
+
+    els.winStats.classList.toggle("hidden", bare);
+    els.winTime.textContent = mmss(recap.time || 0);
+    els.winHints.textContent = String(recap.hints || 0);
     els.winWords.innerHTML = "";
-    var words = [], seen = {};
-    for (var k = 0; k < n; k++) {
-      // Some squares read the same down as across; show each word once.
-      [rowStr(k), colStr(k)].forEach(function (w) {
-        if (!seen[w]) { seen[w] = true; words.push(w); }
-      });
-    }
-    words.forEach(function (w) {
+    (recap.words || []).forEach(function (w) {
       var s = document.createElement("span");
       s.textContent = w;
       els.winWords.appendChild(s);
     });
 
-    renderAll();
-    setTimeout(function () { els.winBack.classList.remove("hidden"); }, 260);
+    els.winRandom.textContent = isDaily ? "Play random puzzles" : "More random puzzles";
+    els.winShare.classList.toggle("hidden", bare);
+    els.winAgain.textContent = isDaily ? "Play it again" : "Today’s puzzle";
+    els.winBack.classList.remove("hidden");
+    els.winRandom.focus();
   }
 
-  function shareText() {
-    var lines = [];
-    for (var r = 0; r < n; r++) {
-      var row = "";
-      for (var c = 0; c < n; c++) {
-        var i = r * n + c;
-        row += puzzle.givens[i] ? "🟦" : hinted[i] ? "🟨" : "🟩";
-      }
-      lines.push(row);
-    }
-    var head = "Word Square " + n + "×" + n + " · " +
-      (puzzle.kind === "daily" ? puzzle.dateKey : "practice");
-    var tail = mmss(elapsed) + (hints ? " · " + hints + " hint" + (hints > 1 ? "s" : "") : " · no hints");
-    return head + "\n" + lines.join("\n") + "\n" + tail;
+  function shareText(res) {
+    var recap = res.recap || {};
+    return daily.shareText({
+      meta: res.meta, score: res.score, max: res.max,
+      // The grid is several lines, so it starts on a line of its own.
+      squares: recap.squares ? "\n" + recap.squares : ""
+    });
   }
-
   function share() {
-    var text = shareText();
-    var ok = function () { toast("Result copied"); };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(ok, function () { toast("Copy failed"); });
-    } else {
-      var ta = document.createElement("textarea");
-      ta.value = text;
-      document.body.appendChild(ta);
-      ta.select();
-      try { document.execCommand("copy"); ok(); } catch (e) { toast("Copy failed"); }
-      document.body.removeChild(ta);
-    }
+    if (!shown) return;
+    daily.share(shareText(shown), els.winShare).then(function (how) {
+      if (how === "failed") toast("Copy failed");
+    });
+  }
+
+  // ---- past puzzles ----------------------------------------------------------
+  function scoreText(r) {
+    if (!r) return "Not played";
+    if (r.max === null || r.max === undefined) return "Solved";
+    return r.score + " / " + r.max;
+  }
+  function showPast() {
+    closeAll();
+    setUrl("?past");
+    var year = daily.today().getFullYear();
+    els.pastList.innerHTML = daily.pastDays().map(function (m) {
+      var when = (m.isToday ? "Today, " : "") + daily.fmtTiny(m.date) +
+        (m.date.getFullYear() !== year ? ", " + m.date.getFullYear() : "");
+      return '<li><a href="?daily=' + m.iso + '" data-daily="' + m.iso + '"' + (m.isToday ? ' class="today"' : "") + ">" +
+        '<span class="n">No. ' + m.number + '</span><span class="d">' + esc(when) + "</span>" +
+        '<span class="s' + (m.record ? " done" : "") + '">' + scoreText(m.record) + "</span></a></li>";
+    }).join("");
+    els.pastBack.classList.remove("hidden");
+    els.pastBack.querySelector(".modal").scrollTop = 0;
+  }
+
+  function closeAll() {
+    els.winBack.classList.add("hidden");
+    els.pastBack.classList.add("hidden");
+  }
+  // Dismissing a panel puts the address back to the puzzle underneath it.
+  function dismiss() {
+    closeAll();
+    setUrl(urlFor(puzzle));
   }
 
   // ---- events ----------------------------------------------------------------
   function onGridClick(e) {
     var t = e.target.closest ? e.target.closest(".cell") : null;
     if (!t) return;
+    if (done) { showResults(boardResults()); return; }   // a solved grid shows its results again
     var i = +t.dataset.i;
-    if (puzzle.givens[i] || done) { sel = i; renderGrid(); return; }
+    if (puzzle.givens[i]) { sel = i; renderGrid(); return; }
     if (cells[i]) { clear(i); sel = i; renderGrid(); return; }
     if (i === sel) dir = dir === "across" ? "down" : "across";
     sel = i;
@@ -565,9 +761,12 @@ window.createWordSquare = function (ctx) {
     if (place(sel, slot.ch)) { advance(); renderGrid(); }
   }
 
+  function anyOpen() {
+    return [els.winBack, els.helpBack, els.pastBack].some(function (b) { return !b.classList.contains("hidden"); });
+  }
   function onKey(e) {
-    if (!els.winBack.classList.contains("hidden") || !els.helpBack.classList.contains("hidden")) {
-      if (e.key === "Escape") { els.winBack.classList.add("hidden"); els.helpBack.classList.add("hidden"); }
+    if (anyOpen()) {
+      if (e.key === "Escape") { els.helpBack.classList.add("hidden"); dismiss(); }
       return;
     }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -593,15 +792,20 @@ window.createWordSquare = function (ctx) {
     else if (k === " " || k === "Enter") { e.preventDefault(); dir = dir === "across" ? "down" : "across"; renderGrid(); }
   }
 
+  // The size and level controls choose random puzzles. The daily is always
+  // 4×4 Easy, so picking anything else deals a random puzzle at that setting,
+  // and the choice is remembered for next time.
   function setSize(size) {
     if (size === n && puzzle) return;
-    write("ws-size", size);
-    load(dailyFor(size, mode));
+    write("size", size);
+    write("mode", mode);
+    startRandom(size, mode);
   }
   function setMode(level) {
     if (level === mode && puzzle) return;
-    write("ws-mode", level);
-    load(dailyFor(n, level));
+    write("size", n);
+    write("mode", level);
+    startRandom(n, level);
   }
 
   function bind() {
@@ -615,22 +819,34 @@ window.createWordSquare = function (ctx) {
     els.hintBtn.addEventListener("click", hint);
     els.shuffleBtn.addEventListener("click", function () { shuffle(tray); renderTray(); });
     els.clearBtn.addEventListener("click", clearAll);
-    els.newBtn.addEventListener("click", function () { load(randomFor(n, mode)); });
-    els.puzLabel.addEventListener("click", function () {
-      if (puzzle.kind !== "daily") load(dailyFor(n, mode));
+    els.newBtn.addEventListener("click", function () { startRandom(n, mode); });
+    els.dailyLinks.addEventListener("click", function (e) {
+      var a = e.target.closest ? e.target.closest("a[data-go]") : null;
+      if (!a) return;
+      e.preventDefault();
+      PLACES[a.dataset.go][2]();
     });
     els.helpBtn.addEventListener("click", function () { els.helpBack.classList.remove("hidden"); });
     els.helpClose.addEventListener("click", function () {
       els.helpBack.classList.add("hidden");
-      write("ws-help-seen", 1);
+      write("help-seen", 1);
     });
+    els.winRandom.addEventListener("click", function () { startRandom(n, mode); });
     els.winShare.addEventListener("click", share);
-    els.winNext.addEventListener("click", function () {
-      els.winBack.classList.add("hidden");
-      load(randomFor(n, mode));
+    els.winPast.addEventListener("click", showPast);
+    els.winAgain.addEventListener("click", function () {
+      if (puzzle.kind === "daily") replay(); else openToday();
     });
-    [els.helpBack, els.winBack].forEach(function (b) {
-      b.addEventListener("click", function (e) { if (e.target === b) b.classList.add("hidden"); });
+    els.pastClose.addEventListener("click", dismiss);
+    els.pastList.addEventListener("click", function (e) {
+      var a = e.target.closest ? e.target.closest("a[data-daily]") : null;
+      if (!a) return;
+      e.preventDefault();
+      openDate(a.dataset.daily);
+    });
+    els.helpBack.addEventListener("click", function (e) { if (e.target === els.helpBack) els.helpBack.classList.add("hidden"); });
+    [els.winBack, els.pastBack].forEach(function (b) {
+      b.addEventListener("click", function (e) { if (e.target === b) dismiss(); });
     });
     var refit = function () { sizeBoard(); sizeTray(tray.length); };
     window.addEventListener("resize", refit);
@@ -639,24 +855,37 @@ window.createWordSquare = function (ctx) {
 
   // ---- start -----------------------------------------------------------------
   function start() {
-    n = +read("ws-size", 4) === 5 ? 5 : 4;
-    mode = read("ws-mode", "easy") === "hard" ? "hard" : "easy";
+    migrate();
     bind();
-    load(dailyFor(n, mode));
-    if (!read("ws-help-seen", 0)) els.helpBack.classList.remove("hidden");
+    route();
+    if (!read("help-seen", 0)) els.helpBack.classList.remove("hidden");
   }
 
   return {
     start: start,
     // exposed for the smoke test
     _debug: {
+      daily: daily,
       solve: function () {
         clearAll();
         for (var i = 0; i < n * n; i++) if (!puzzle.givens[i]) place(i, puzzle.sol[i]);
       },
       state: function () {
-        return { n: n, mode: mode, id: puzzle.id, cells: serialize(), done: done, hints: hints };
-      }
+        return {
+          n: n, mode: mode, id: puzzle.id, kind: puzzle.kind, iso: puzzle.meta ? puzzle.meta.iso : null,
+          cells: serialize(), done: done, hints: hints
+        };
+      },
+      dailyFor: function (isoDate) {
+        var p = dailyFor(daily.metaFor(daily.parseIso(isoDate)));
+        return { id: p.id, index: p.index, sol: p.sol.join(""), givens: Object.keys(p.givens) };
+      },
+      legacyPuzzle: function (size, level, isoDate) {
+        var p = legacyPuzzle(size, level, isoDate);
+        return { id: p.id, sol: p.sol.join(""), givens: Object.keys(p.givens) };
+      },
+      results: boardResults,
+      shareText: function () { return shown ? shareText(shown) : ""; }
     }
   };
 };

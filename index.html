@@ -117,8 +117,12 @@
   .meta .puz { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .meta b { color: var(--text); font-weight: 700; }
   .meta .tick { font-variant-numeric: tabular-nums; }
-  .meta .link { color: var(--accent); text-decoration: underline; cursor: pointer; }
-  .meta [role="button"] { cursor: pointer; }
+  /* The daily line is two rows: which puzzle this is, with the timer at the
+     far end, then the two places to go next. Together they are one flex item,
+     so the body's gap is paid once rather than twice. */
+  .daily { display: flex; flex-direction: column; gap: 3px; flex: none; }
+  .links { display: flex; gap: 16px; font-size: 0.8rem; }
+  .links a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
 
   /* ---------------- board ---------------- */
   /* The grid plus its two strips of pips. --cell is set from JS to fit the
@@ -211,6 +215,16 @@
     border: 1px solid var(--border); background: var(--card-2); color: var(--text);
   }
   .modal button.primary { background: var(--accent); color: #1b1740; border-color: transparent; }
+  .modal button.quiet { background: transparent; border-color: transparent; color: var(--muted); }
+  .modal .btn-row.single { margin-top: 8px; }
+
+  /* results: the score, a verdict, the streak, whether it was kept */
+  .win-score { font-size: 2.6rem; font-weight: 800; line-height: 1; margin: 8px 0 6px; font-variant-numeric: tabular-nums; }
+  .win-score small { font-size: 1rem; font-weight: 700; color: var(--muted); }
+  .win-verdict { margin: 0; }
+  .win-streak { margin: 6px 0 0; color: var(--accent); font-weight: 800; font-size: 0.9rem; }
+  .win-saved { margin: 4px 0 0; color: var(--muted); font-size: 0.82rem; }
+  .win-saved.first { color: var(--good); }
 
   .win-stats { display: flex; gap: 10px; margin: 12px 0 4px; }
   .win-stats .st {
@@ -225,6 +239,19 @@
     background: rgba(74, 222, 128, 0.14); border: 1px solid rgba(74, 222, 128, 0.3);
     color: var(--good); border-radius: 999px; padding: 2px 8px;
   }
+
+  /* past puzzles: one row per day, newest first */
+  .days { list-style: none; margin: 10px 0 0; padding: 0; }
+  .days a {
+    display: grid; grid-template-columns: 4.4em 1fr auto; gap: 10px; align-items: baseline;
+    padding: 9px 2px; border-bottom: 1px solid var(--border);
+    color: inherit; text-decoration: none; font-size: 0.88rem;
+  }
+  .days .n { font-weight: 700; }
+  .days .d { color: var(--muted); }
+  .days .s { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .days .s.done { color: var(--good); font-weight: 700; }
+  .days a.today .n { color: var(--accent); }
 
   .toast {
     position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 76px);
@@ -251,9 +278,12 @@
     <button class="icon-btn" id="helpBtn" type="button" aria-label="How to play">?</button>
   </div>
 
-  <div class="meta">
-    <span class="puz" id="puzLabel">—</span>
-    <span class="tick" id="timer">0:00</span>
+  <div class="daily">
+    <div class="meta">
+      <span class="puz" id="puzLabel">—</span>
+      <span class="tick" id="timer">0:00</span>
+    </div>
+    <nav class="links" id="dailyLinks" aria-label="Where to go next"></nav>
   </div>
 
   <div class="board-wrap">
@@ -284,8 +314,15 @@
         <li>Tap a square, then tap a tray letter or type one. Tap a placed letter to send it back.</li>
         <li>A dot lights up beside each row and under each column once it spells a word.</li>
         <li>Any valid square wins, not just the one we had in mind.</li>
-        <li>🎲 deals a practice puzzle; the label up top brings you back to today's.</li>
+        <li>🎲 deals a random puzzle; <b>Today's puzzle</b>, under the controls, brings you back.</li>
       </ul>
+      <h2>The daily puzzle</h2>
+      <p>One puzzle a day, the same for everyone, at 4×4 Easy. Your score is the
+        letters you placed without a hint, out of the ten in the tray. The first
+        time you solve it is the score that is kept — you can play it again, but
+        the first one stands. Solve it day after day and your streak grows.
+        Random puzzles, at any size and level, are unlimited, and nothing is
+        saved from them.</p>
       <h2>Easy and Hard</h2>
       <ul>
         <li><b>Easy</b> grids are mirrors. The first column spells the same word
@@ -294,33 +331,55 @@
         <li><b>Hard</b> grids have no mirror. All eight words (ten at 5×5) are
           different, and nothing comes free.</li>
       </ul>
-      <p class="k">A new puzzle every day, at each size and difficulty. Your place is
-        kept on this device, so you can put it down and come back.</p>
+      <p class="k">Your place is kept on this device, so you can put a puzzle down
+        and come back to it.</p>
       <div class="btn-row"><button type="button" class="primary" id="helpClose">Got it</button></div>
     </div>
   </div>
 
-  <!-- win -->
+  <!-- results. The order is the one every Shozbot daily uses: the score, a
+       verdict, the streak, whether it was kept, then the game's own time, hints
+       and words, then the ways on. -->
   <div class="backdrop hidden" id="winBack">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="winTitle">
       <h2 id="winTitle">Solved</h2>
       <p class="k" id="winSub"></p>
-      <div class="win-stats">
+      <div class="win-score" id="winScore"></div>
+      <p class="win-verdict" id="winVerdict"></p>
+      <p class="win-streak hidden" id="winStreak"></p>
+      <p class="win-saved" id="winSaved"></p>
+      <div class="win-stats" id="winStats">
         <div class="st"><div class="v" id="winTime">—</div><div class="l">Time</div></div>
         <div class="st"><div class="v" id="winHints">—</div><div class="l">Hints</div></div>
-        <div class="st"><div class="v" id="winStreak">—</div><div class="l">Streak</div></div>
       </div>
       <div class="win-words" id="winWords"></div>
-      <div class="btn-row">
+      <div class="btn-row"><button type="button" class="primary" id="winRandom">Play random puzzles</button></div>
+      <div class="btn-row single">
         <button type="button" id="winShare">Share</button>
-        <button type="button" class="primary" id="winNext">Random puzzle</button>
+        <button type="button" id="winPast">Past puzzles</button>
       </div>
+      <div class="btn-row single"><button type="button" class="quiet" id="winAgain">Play it again</button></div>
+    </div>
+  </div>
+
+  <!-- past puzzles: the previous 100 days, newest first -->
+  <div class="backdrop hidden" id="pastBack">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pastTitle">
+      <h2 id="pastTitle">Past puzzles</h2>
+      <p class="k">Each day has its own grid, numbered by the day of the year. Your
+        score is kept beside any you have played. Tap a day to play it.</p>
+      <ul class="days" id="pastList"></ul>
+      <div class="btn-row"><button type="button" class="primary" id="pastClose">Close</button></div>
     </div>
   </div>
 
   <div class="toast" id="toast"></div>
 
 <script src="puzzles.js"></script>
+<!-- The studio's daily-puzzle kit: the day's number and seed, one saved record
+     a day with the first score kept, the streak, and the share text. A copy of
+     shozbot/kit/daily.js — change it there, then copy it here. -->
+<script src="shozbot-daily.js"></script>
 <script src="game.js"></script>
 <script>
   window.game = window.createWordSquare({
