@@ -34,14 +34,19 @@ than at runtime.
 - **Two sizes.** 4×4 opens with 6 letters given and 10 in the tray; 5×5 opens
   with 9 given and 16 in the tray. Every row and column is guaranteed at least
   one given letter, so no line is pure guesswork.
-- **A puzzle a day for each of the four combinations**, chosen by your local
-  calendar date, so the grid turns over at your midnight and everyone gets the
-  same one.
+- **One puzzle a day, the same for everyone**, at 4×4 Easy, numbered by the day
+  of the year (`Daily No. 285`) and chosen by your local calendar date, so the
+  grid turns over at your midnight. Every other size and level is a random
+  puzzle. The page opens straight into today's, or on its results if you have
+  played it; **Past puzzles** lists the previous 100 days and any can be played.
+- **Your score is the letters you placed without a hint**, out of the ten in
+  the tray. The first time you solve a day is the score that is kept; a replay
+  never touches it. Days in a row make a streak.
 - **Any valid square wins**, not just the stored solution. Rows and columns are
   checked against a dictionary, so a different arrangement that works still
   counts.
-- **200 puzzles per bank**, 800 in total, plus 🎲 for a random practice grid at
-  any time.
+- **200 puzzles per bank**, 800 in total, plus 🎲 for a random grid at any
+  size and level, any time. Random scores are not saved.
 
 ## Playing
 
@@ -53,12 +58,21 @@ than at runtime.
 | Switch across / down | Tap the selected square again, or press Space |
 | Move around | Arrow keys |
 
-💡 fills in one correct letter and counts against you. 🔀 reshuffles the tray.
-↩️ empties the grid. 🎲 deals a practice puzzle, and the label at the top brings
-you back to today's.
+💡 fills in one correct letter and costs the point for that square. 🔀
+reshuffles the tray. ↩️ empties the grid. 🎲 deals a random puzzle, and
+**Today's puzzle** under the controls brings you back.
 
-Your progress, timer, hint count and daily streak are kept in `localStorage`, so
-a reload or a closed tab picks up where you left off. Nothing leaves the device.
+Your progress, timer and hint count, one record per day with the kept score,
+and the settings you last chose for random puzzles are kept in `localStorage`
+under `wordsquare:`, so a reload or a closed tab picks up where you left off.
+Nothing leaves the device. The address says which puzzle is showing —
+`?daily=2026-10-12`, `?past`, `?practice`, nothing for today's — so a day can
+be linked.
+
+The daily's number, seed, saved records, streak, wording and share text come
+from `shozbot-daily.js`, a copy of the studio's shared kit
+(`shozbot/kit/daily.js`); it is the same across every Shozbot daily game, so
+change it there and copy it here rather than editing the copy.
 
 ## Run it locally
 
@@ -143,7 +157,10 @@ A headless smoke test (Playwright) serves the folder and verifies all 800 stored
 squares: that each really is a double word square, and that each has the shape
 its difficulty promises. It then plays a game: placing, taking back, hinting,
 solving, switching size and difficulty, reloading, and returning to the daily
-puzzle.
+puzzle — and checks the daily itself: the same day draws the same grid, the
+first score is the one kept, the streak counts, what the old version saved
+comes across, Past puzzles and the address work, and everything fits a
+375×667 screen.
 
 ```sh
 npm install
