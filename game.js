@@ -38,6 +38,7 @@ window.createWordSquare = function (ctx) {
     board: $("board"), grid: $("grid"), pipsR: $("pipsR"), pipsB: $("pipsB"),
     tray: $("tray"),
     hintBtn: $("hintBtn"), shuffleBtn: $("shuffleBtn"), clearBtn: $("clearBtn"), newBtn: $("newBtn"),
+    scoreBtn: $("scoreBtn"), winGrid: $("winGrid"),
     helpBack: $("helpBack"), helpClose: $("helpClose"),
     winBack: $("winBack"), winSub: $("winSub"), winScore: $("winScore"), winVerdict: $("winVerdict"),
     winStreak: $("winStreak"), winSaved: $("winSaved"), winStats: $("winStats"),
@@ -66,6 +67,7 @@ window.createWordSquare = function (ctx) {
   var tickId = null;
   var toastId = null;
   var shown = null;       // the results on screen, for Share
+  var lastRes = null;   // the result of the solve on screen, with its "first" flag
 
   // ---- seeded randomness -----------------------------------------------------
   // The same puzzle must lay out the same way on every device and every reload,
@@ -251,6 +253,7 @@ window.createWordSquare = function (ctx) {
     hints = 0;
     elapsed = 0;
     done = false;
+    lastRes = null;
 
     // Tray holds exactly the letters the player still has to place.
     var seedRand = rng(hash32(p.id + ":tray"));
@@ -318,7 +321,10 @@ window.createWordSquare = function (ctx) {
     load(dailyFor(meta));
     setUrl(urlFor(puzzle));
     var r = daily.record(meta.iso);
-    if (r && !(opts && opts.quiet)) showResults(fromRecord(meta, r));
+    // A played day whose finished grid is still saved shows the grid, with the
+    // score behind its button; only a record with no grid to show (migrated
+    // from the old game) goes straight to the results.
+    if (r && !done && !(opts && opts.quiet)) showResults(fromRecord(meta, r));
   }
   function openToday(opts) { openDate(todayIso(), opts); }
 
@@ -569,6 +575,9 @@ window.createWordSquare = function (ctx) {
     els.modeHard.classList.toggle("active", mode === "hard");
     els.hintBtn.disabled = done;
     els.clearBtn.disabled = done;
+    // A solved grid swaps its tools for the one thing left to do.
+    [els.hintBtn, els.shuffleBtn, els.clearBtn].forEach(function (b) { b.classList.toggle("hidden", done); });
+    els.scoreBtn.classList.toggle("hidden", !done);
   }
 
   function renderAll() { renderGrid(); renderPips(); renderTray(); renderMeta(); }
@@ -653,9 +662,14 @@ window.createWordSquare = function (ctx) {
 
     var res = boardResults();
     if (puzzle.kind === "daily") res.first = daily.save(puzzle.meta, res).first;
+    lastRes = res;
     renderAll();
-    setTimeout(function () { showResults(res); }, 260);
+    // The finished square stays on screen; the score waits behind the button
+    // below it (Bertrand, 2026-10-12: see the completed game before the score).
+    toast("Solved");
+    els.scoreBtn.focus();
   }
+  function showScore() { showResults(lastRes || boardResults()); }
 
   // The results, in the order every Shozbot daily uses: the score, a verdict,
   // the streak when there is one, whether it was saved, then the game's own
@@ -817,6 +831,8 @@ window.createWordSquare = function (ctx) {
     els.modeEasy.addEventListener("click", function () { setMode("easy"); });
     els.modeHard.addEventListener("click", function () { setMode("hard"); });
     els.hintBtn.addEventListener("click", hint);
+    els.scoreBtn.addEventListener("click", showScore);
+    els.winGrid.addEventListener("click", dismiss);
     els.shuffleBtn.addEventListener("click", function () { shuffle(tray); renderTray(); });
     els.clearBtn.addEventListener("click", clearAll);
     els.newBtn.addEventListener("click", function () { startRandom(n, mode); });

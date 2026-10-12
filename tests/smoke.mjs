@@ -210,6 +210,11 @@ async function run() {
   //    game's own time, hints and words.
   await page.evaluate(() => window.game._debug.solve());
   assert((await litPips(page)) === 8, `8 pips lit on a solved 4x4, got ${await litPips(page)}`);
+  // The finished grid stays on screen; the score waits behind its button.
+  assert(!(await modalOpen("#winBack")), "solving does not cover the grid with the results");
+  assert(await page.$eval("#scoreBtn", (b) => !b.classList.contains("hidden")), "a solved grid offers See your score");
+  assert(await page.$eval("#hintBtn", (b) => b.classList.contains("hidden")), "the tools step aside once solved");
+  await page.click("#scoreBtn");
   await page.waitForSelector("#winBack:not(.hidden)", { timeout: 3000 });
   const text = (id) => page.$eval(id, (e) => e.textContent.trim());
   // solve() clears the grid first, so the hinted square was placed by hand.
@@ -230,7 +235,11 @@ async function run() {
   assert(new Set(listed).size === listed.length, "word list has no duplicates");
   assert(listed.every((w) => w.length === 4), "listed words are 4 letters");
   assert.deepStrictEqual(await page.$$eval("#winBack button:not(.hidden)", (b) => b.map((x) => x.textContent)),
-    ["Play random puzzles", "Share", "Past puzzles", "Play it again"], "the four ways on, in order");
+    ["Play random puzzles", "Share", "Past puzzles", "See the grid", "Play it again"], "the ways on, in order");
+  await page.click("#winGrid");
+  assert(!(await modalOpen("#winBack")) && (await litPips(page)) === 8, "See the grid goes back to the finished square");
+  await page.click("#scoreBtn");
+  await page.waitForSelector("#winBack:not(.hidden)", { timeout: 3000 });
   const kept = await page.evaluate((iso) => JSON.parse(localStorage.getItem("wordsquare:daily:" + iso)), dates.today);
   assert(kept && kept.score === 10 && kept.max === 10 && kept.results.length === 10, `record kept in the kit's shape, got ${JSON.stringify(kept)}`);
   assert(kept.recap.words.length === listed.length && typeof kept.recap.time === "number", "recap holds the words and the time");
@@ -242,7 +251,9 @@ async function run() {
   //    line now says the first score is the one kept.
   await page.reload();
   await page.waitForSelector("#grid .cell");
-  assert(await modalOpen("#winBack"), "a played day opens on its results");
+  assert(!(await modalOpen("#winBack")) && (await litPips(page)) === 8, "a played day opens on its finished grid");
+  await page.click("#scoreBtn");
+  await page.waitForSelector("#winBack:not(.hidden)", { timeout: 3000 });
   assert((await text("#winSaved")) === "Your first score for this puzzle is the one that is kept.", "kept-score wording on a revisit");
 
   // 10) First score kept: play it again with a hint, and the record does not move.
@@ -263,6 +274,7 @@ async function run() {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: ch, bubbles: true }));
     });
   });
+  await page.click("#scoreBtn");
   await page.waitForSelector("#winBack:not(.hidden)", { timeout: 3000 });
   assert((await text("#winScore")) === "9 / 10", `a hint costs its square, got "${await text("#winScore")}"`);
   assert((await text("#winSaved")) === "Your first score for this puzzle is the one that is kept.", "replay is not saved");
@@ -326,26 +338,26 @@ async function run() {
   const rnd = await state();
   assert(rnd.id.startsWith("free:5:hard:"), `the dice deal another random puzzle, got ${rnd.id}`);
   await page.evaluate(() => window.game._debug.solve());
+  await page.click("#scoreBtn");
   await page.waitForSelector("#winBack:not(.hidden)", { timeout: 3000 });
   assert((await litPips(page)) === 10, "10 pips lit on a solved 5x5");
   assert((await text("#winScore")) === "16 / 16", "5x5 is out of 16");
   assert((await text("#winSaved")) === "Random puzzle scores are not saved.", "random results are not saved");
   assert.deepStrictEqual(await page.$$eval("#winBack button:not(.hidden)", (b) => b.map((x) => x.textContent)),
-    ["More random puzzles", "Share", "Past puzzles", "Today’s puzzle"], "a random puzzle's ways on");
+    ["More random puzzles", "Share", "Past puzzles", "See the grid", "Today’s puzzle"], "a random puzzle's ways on");
   assert((await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("wordsquare:daily:")).length)) === 1,
     "only today's record exists");
 
   // 15) Today's puzzle, from the results and from the daily line.
   await page.click("#winAgain");   // reads "Today's puzzle" on a random puzzle
-  assert(await modalOpen("#winBack"), "today's is played, so it opens on its results");
+  assert(!(await modalOpen("#winBack")) && (await state()).done, "today's is played, so it opens on its finished grid");
   assert((await state()).id === `daily:4:easy:${dates.today}`, "back on today's puzzle");
   assert(query() === "", "and the address is bare again");
-  await page.click("#winBack", { position: { x: 5, y: 5 } });
   await page.click("#dailyLinks a[data-go=random]");
   assert((await state()).kind === "free", "Random puzzles link deals one");
   await page.click("#dailyLinks a[data-go=today]");
   assert((await state()).id === `daily:4:easy:${dates.today}`, "Today's puzzle link comes home");
-  await page.click("#winBack", { position: { x: 5, y: 5 } });
+  assert(!(await modalOpen("#winBack")) && (await state()).done, "and shows the finished grid, not the results");
 
   // 16) Past puzzles: the previous 100 days, newest first, today marked with
   //     its kept score, and a day opens when tapped.
@@ -366,6 +378,7 @@ async function run() {
   assert(query() === `?daily=${dates.yesterday}`, `a past day is at ?daily=, got "${query()}"`);
   assert((await page.$eval("#puzLabel", (e) => e.textContent)).startsWith(`Daily No. ${dates.number - 1 || 365}`), "yesterday's number");
   await page.evaluate(() => window.game._debug.solve());
+  await page.click("#scoreBtn");
   await page.waitForSelector("#winBack:not(.hidden)", { timeout: 3000 });
   assert((await text("#winSaved")) === "Saved as your score for this day.", "a past day is saved for that day");
   assert(await page.$eval("#winStreak", (e) => e.classList.contains("hidden")), "no streak line on a past day");
@@ -417,6 +430,7 @@ async function run() {
     await p.waitForSelector("#grid .cell");
     assert((await p.evaluate(() => window.game._debug.daily.streak())) === 2, "two days ending yesterday count");
     await p.evaluate(() => window.game._debug.solve());
+    await p.click("#scoreBtn");
     await p.waitForSelector("#winBack:not(.hidden)", { timeout: 3000 });
     assert((await p.$eval("#winStreak", (e) => e.textContent)) === "3 days in a row", "today's solve makes three");
     assert(!(await p.$eval("#winStreak", (e) => e.classList.contains("hidden"))), "streak line shown");
