@@ -243,6 +243,7 @@ async function run() {
   const kept = await page.evaluate((iso) => JSON.parse(localStorage.getItem("wordsquare:daily:" + iso)), dates.today);
   assert(kept && kept.score === 10 && kept.max === 10 && kept.results.length === 10, `record kept in the kit's shape, got ${JSON.stringify(kept)}`);
   assert(kept.recap.words.length === listed.length && typeof kept.recap.time === "number", "recap holds the words and the time");
+  assert(typeof kept.recap.cells === "string" && kept.recap.cells.length === 16 && !kept.recap.cells.includes(" "), "recap holds the finished grid");
   const share = await page.evaluate(() => window.game._debug.shareText());
   assert(share.startsWith(`Word Square No. ${dates.number} · `) && share.includes("\n10/10") && (share.match(/🟦/g) || []).length === 6
     && (share.match(/\n[🟩🟦🟨]{4}/g) || []).length === 4, `share text carries the grid as squares, got ${JSON.stringify(share)}`);
@@ -381,6 +382,22 @@ async function run() {
   await page.click("#scoreBtn");
   await page.waitForSelector("#winBack:not(.hidden)", { timeout: 3000 });
   assert((await text("#winSaved")) === "Saved as your score for this day.", "a past day is saved for that day");
+  // 16b) With its progress gone, that day comes back from the record alone:
+  //      the finished grid on the board, read-only, the score behind the button.
+  await page.click("#winGrid");
+  const keptCells = (await state()).cells;
+  await page.evaluate((iso) => { Object.keys(localStorage).filter((k) => k.startsWith("wordsquare:p:")).forEach((k) => localStorage.removeItem(k)); }, dates.yesterday);
+  await page.goto(base + `?daily=${dates.yesterday}`);
+  await page.waitForSelector("#grid .cell");
+  assert(!(await modalOpen("#winBack")), "a kept day opens on its grid, not its results");
+  assert((await state()).done && (await state()).cells === keptCells, "the grid is the one that was played");
+  assert(await page.$eval("#scoreBtn", (b) => !b.classList.contains("hidden")), "with the score behind its button");
+  assert((await freeTiles(page)) === 0, "and no letters left to place");
+  await page.click("#scoreBtn");
+  await page.waitForSelector("#winBack:not(.hidden)", { timeout: 3000 });
+  assert((await text("#winScore")) === "10 / 10" && (await text("#winSaved")) === "Your first score for this puzzle is the one that is kept.", "the kept score shows");
+  await page.click("#winGrid");
+  assert(!(await modalOpen("#winBack")) && (await state()).cells === keptCells, "See the grid goes back to it");
   assert(await page.$eval("#winStreak", (e) => e.classList.contains("hidden")), "no streak line on a past day");
 
   // 17) The daily draw: the same day gives the same grid every time, and the
@@ -481,10 +498,20 @@ async function run() {
     await p.click("#dailyLinks a[data-go=past]");
     assert(await p.$eval(`#pastList a[data-daily="${dates.yesterday}"] .s`, (e) => e.textContent) === "9 / 10", "past list shows the migrated score");
     assert(await p.$eval(`#pastList a[data-daily="${dates.before}"] .s`, (e) => e.textContent) === "Solved", "past list shows a solved day without a score");
+    await p.click(`#pastList a[data-daily="${dates.yesterday}"]`);
+    const yState = await p.evaluate(() => window.game._debug.state());
+    assert(yState.done && !yState.cells.includes(" ") && yState.hints === 1, `a migrated day's grid is rebuilt from its words, got ${JSON.stringify(yState)}`);
+    assert(!(await p.$eval("#winBack", (e) => !e.classList.contains("hidden"))), "and shows the grid first");
+    await p.click("#scoreBtn");
+    await p.waitForSelector("#winBack:not(.hidden)");
+    assert((await p.$eval("#winScore", (e) => e.textContent.trim())) === "9 / 10", "with its migrated score");
+    await p.click("#winGrid");
+    await p.click("#dailyLinks a[data-go=past]");
     await p.click(`#pastList a[data-daily="${dates.before}"]`);
     await p.waitForSelector("#winBack:not(.hidden)");
     assert((await p.$eval("#winScore", (e) => e.textContent)) === "Solved", "a solved day without a score says so");
     assert(await p.$eval("#winShare", (e) => e.classList.contains("hidden")), "nothing to share for it");
+    assert(await p.$eval("#winGrid", (e) => e.classList.contains("hidden")), "and no grid to see");
     await c.close();
   }
 

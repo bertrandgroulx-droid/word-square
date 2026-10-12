@@ -321,10 +321,10 @@ window.createWordSquare = function (ctx) {
     load(dailyFor(meta));
     setUrl(urlFor(puzzle));
     var r = daily.record(meta.iso);
-    // A played day whose finished grid is still saved shows the grid, with the
-    // score behind its button; only a record with no grid to show (migrated
-    // from the old game) goes straight to the results.
-    if (r && !done && !(opts && opts.quiet)) showResults(fromRecord(meta, r));
+    // A played day shows its finished grid, with the score behind its button:
+    // from the saved progress if it is still here, else rebuilt from the
+    // record. Only a record with no grid to show goes straight to the results.
+    if (r && !done && !showKept(meta, r) && !(opts && opts.quiet)) showResults(fromRecord(meta, r));
   }
   function openToday(opts) { openDate(todayIso(), opts); }
 
@@ -640,7 +640,9 @@ window.createWordSquare = function (ctx) {
     }
     return {
       score: score, max: results.length, results: results,
-      recap: { time: seconds, hints: hintCount, words: words, squares: rows.join("\n") }
+      // cells: the finished grid itself, so a past day can be shown again
+      // whatever the draw does later (added 2026-10-12).
+      recap: { time: seconds, hints: hintCount, words: words, squares: rows.join("\n"), cells: grid.map(function (c) { return c || " "; }).join("") }
     };
   }
   function boardResults() {
@@ -651,6 +653,67 @@ window.createWordSquare = function (ctx) {
   }
   function fromRecord(meta, r) {
     return { meta: meta, first: false, score: r.score, max: r.max, results: r.results, recap: r.recap || {} };
+  }
+
+  // ---- showing a day that was played ------------------------------------------
+  // A record made since 2026-10-12 carries its finished grid. One migrated from
+  // the old game carries only its words, which is usually enough: find an order
+  // of n of them as rows whose columns are all words too. A record with neither
+  // (a day solved at another size before scores were kept) has no grid to show.
+  function gridFromWords(words, size) {
+    if (!words || words.length < size) return null;
+    var set = {}; words.forEach(function (w) { set[w] = true; });
+    var rows = [], used = {};
+    function fits() {
+      for (var c = 0; c < size; c++) {
+        var col = "";
+        for (var r = 0; r < size; r++) col += rows[r][c];
+        if (!set[col]) return false;
+      }
+      return true;
+    }
+    function pick(depth) {
+      if (depth === size) return fits();
+      for (var i = 0; i < words.length; i++) {
+        if (used[i] || words[i].length !== size) continue;
+        used[i] = true; rows.push(words[i]);
+        if (pick(depth + 1)) return true;
+        rows.pop(); used[i] = false;
+      }
+      return false;
+    }
+    return pick(0) ? rows.join("").split("") : null;
+  }
+  function gridFromRecord(r, size) {
+    var recap = r && r.recap ? r.recap : {};
+    var grid = typeof recap.cells === "string" && recap.cells.length === size * size ? recap.cells.split("") : gridFromWords(recap.words, size);
+    if (!grid || grid.some(function (ch) { return !ch || ch === " "; })) return null;
+    var givens = {}, hinted = {};
+    (recap.squares || "").split("\n").forEach(function (row, rIdx) {
+      Array.from(row).forEach(function (sq, c) {
+        var i = rIdx * size + c;
+        if (sq === "\ud83d\udfe6") givens[i] = true;     // 🟦
+        else if (sq === "\ud83d\udfe8") hinted[i] = true; // 🟨
+      });
+    });
+    return { cells: grid, givens: givens, hinted: hinted };
+  }
+  // Put a kept day's finished grid on the board, read-only, with its score
+  // behind the button. Returns false when the record has no grid to show.
+  function showKept(meta, r) {
+    var g = gridFromRecord(r, n);
+    if (!g) return false;
+    puzzle = Object.assign({}, puzzle, { givens: g.givens, sol: g.cells });
+    cells = g.cells.slice();
+    hinted = g.hinted;
+    hints = r.recap.hints || 0;
+    elapsed = r.recap.time || 0;
+    done = true;
+    running = false;
+    tray.forEach(function (t) { t.cell = 0; });   // every letter is placed
+    lastRes = fromRecord(meta, r);
+    renderAll();
+    return true;
   }
 
   // ---- winning ---------------------------------------------------------------
@@ -703,6 +766,7 @@ window.createWordSquare = function (ctx) {
     els.winRandom.textContent = isDaily ? "Play random puzzles" : "More random puzzles";
     els.winShare.classList.toggle("hidden", bare);
     els.winAgain.textContent = isDaily ? "Play it again" : "Today’s puzzle";
+    els.winGrid.classList.toggle("hidden", !done);
     els.winBack.classList.remove("hidden");
     els.winRandom.focus();
   }
@@ -757,7 +821,7 @@ window.createWordSquare = function (ctx) {
   function onGridClick(e) {
     var t = e.target.closest ? e.target.closest(".cell") : null;
     if (!t) return;
-    if (done) { showResults(boardResults()); return; }   // a solved grid shows its results again
+    if (done) { showScore(); return; }   // a solved grid shows its results again
     var i = +t.dataset.i;
     if (puzzle.givens[i]) { sel = i; renderGrid(); return; }
     if (cells[i]) { clear(i); sel = i; renderGrid(); return; }
