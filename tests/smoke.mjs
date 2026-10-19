@@ -538,10 +538,125 @@ async function run() {
     await c.close();
   }
 
+  // 22) The share icon at the top: a link to what is on screen, always the
+  //     shozbot.com address from the canonical link. A specific day's grid gets
+  //     the dated link whether it is in play, solved, or on its results; a
+  //     random puzzle and the Past puzzles list get the plain address. On a
+  //     phone it goes to the share sheet with a title.
+  {
+    const c = await browser.newContext({ viewport: { width: 375, height: 667 }, isMobile: true });
+    const p = await c.newPage();
+    p.on("pageerror", (e) => errors.push(e.message));
+    await p.addInitScript(() => {
+      window.__shared = [];
+      Object.defineProperty(navigator, "share", { value: (d) => { window.__shared.push(d); return Promise.resolve(); }, configurable: true });
+    });
+    const link = () => p.evaluate(() => window.game._debug.shareLink());
+    const shared = () => p.evaluate(() => window.__shared[window.__shared.length - 1]);
+    const PLAIN = "https://shozbot.com/word-square/";
+    await p.goto(base);
+    await p.waitForSelector("#grid .cell");
+    await p.click("#helpClose");
+    // In the ? row at 375px: same size, same centre, to its left, nothing wraps.
+    const row = await p.evaluate(() => {
+      const r = (id) => document.getElementById(id).getBoundingClientRect();
+      const s = r("shareBtn"), q = r("helpBtn");
+      return { parent: document.getElementById("shareBtn").parentNode.className, w: s.width, h: s.height, cy: s.top + s.height / 2, qcy: q.top + q.height / 2, qw: q.width,
+        leftOfHelp: s.right <= q.left, bar: document.querySelector(".topbar").getBoundingClientRect().height, scrollWidth: document.documentElement.scrollWidth };
+    });
+    assert(row.parent === "topbar" && row.leftOfHelp && row.w === 34 && row.h === 34 && row.w === row.qw && row.cy === row.qcy && row.bar <= 36 && row.scrollWidth <= 375,
+      `share icon left of the ?, its size and centre, no wrap at 375px: ${JSON.stringify(row)}`);
+    // Today's puzzle, in play: dated, even though the address bar is bare.
+    assert.deepStrictEqual(await link(), { url: `${PLAIN}?daily=${dates.today}`, title: `Word Square · Daily No. ${dates.number}` }, "today's puzzle shares its dated link");
+    await p.click("#shareBtn");
+    assert.deepStrictEqual(await shared(), { title: `Word Square · Daily No. ${dates.number}`, url: `${PLAIN}?daily=${dates.today}` }, "a phone gets the share sheet with the title and the dated link");
+    // Solved, with the score behind its button, and then on the results.
+    await p.evaluate(() => window.game._debug.solve());
+    assert((await link()).url === `${PLAIN}?daily=${dates.today}`, "a solved grid still shares the day");
+    await p.click("#scoreBtn");
+    await p.waitForSelector("#winBack:not(.hidden)", { timeout: 3000 });
+    assert((await link()).url === `${PLAIN}?daily=${dates.today}`, "the results share the day");
+    await p.click("#winGrid");
+    // A past day.
+    await p.goto(base + "?daily=" + dates.yesterday);
+    await p.waitForSelector("#grid .cell");
+    const yNumber = await p.evaluate((iso) => window.game._debug.daily.metaFor(window.game._debug.daily.parseIso(iso)).number, dates.yesterday);
+    assert.deepStrictEqual(await link(), { url: `${PLAIN}?daily=${dates.yesterday}`, title: `Word Square · Daily No. ${yNumber}` }, "a past day shares its dated link");
+    // The Past puzzles list, over that day: plain.
+    await p.click("#dailyLinks a[data-go=past]");
+    assert.deepStrictEqual(await link(), { url: PLAIN, title: "Word Square" }, "the Past puzzles list shares the plain address");
+    await p.click("#pastClose");
+    assert((await link()).url === `${PLAIN}?daily=${dates.yesterday}`, "closing the list goes back to the day's link");
+    // A random puzzle: plain, and the results Share button is still the score.
+    await p.click("#newBtn");
+    assert.deepStrictEqual(await link(), { url: PLAIN, title: "Word Square" }, "a random puzzle shares the plain address");
+    await p.click("#shareBtn");
+    assert.deepStrictEqual(await shared(), { title: "Word Square", url: PLAIN }, "the share sheet gets the plain address for a random puzzle");
+    await p.evaluate(() => window.game._debug.solve());
+    await p.click("#scoreBtn");
+    await p.waitForSelector("#winBack:not(.hidden)", { timeout: 3000 });
+    assert(await p.$eval("#winShare", (b) => b.textContent === "Share"), "the results keep their own Share button");
+    await c.close();
+  }
+
+  // 23) On a laptop there is no share sheet: the link is copied and a toast says
+  //     so. With no clipboard either, the toast shows the link itself.
+  {
+    const c = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await c.grantPermissions(["clipboard-read", "clipboard-write"]);
+    const p = await c.newPage();
+    p.on("pageerror", (e) => errors.push(e.message));
+    await p.goto(base);
+    await p.waitForSelector("#grid .cell");
+    await p.click("#helpClose");
+    assert(await p.evaluate(() => !navigator.share), "headless Chromium has no share sheet, so this is the laptop path");
+    await p.click("#shareBtn");
+    await p.waitForSelector("#toast.show", { timeout: 2000 });
+    assert((await p.$eval("#toast", (e) => e.textContent)) === "Link copied", `laptop toast, got "${await p.$eval("#toast", (e) => e.textContent)}"`);
+    assert((await p.evaluate(() => navigator.clipboard.readText())) === `https://shozbot.com/word-square/?daily=${dates.today}`, "the dated link is on the clipboard");
+    await p.waitForFunction(() => !document.getElementById("toast").classList.contains("show"), null, { timeout: 3000 });
+    await c.close();
+
+    const c2 = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const p2 = await c2.newPage();
+    p2.on("pageerror", (e) => errors.push(e.message));
+    await p2.addInitScript(() => { Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true }); });
+    await p2.goto(base + "?practice");
+    await p2.waitForSelector("#grid .cell");
+    await p2.click("#helpClose");
+    await p2.click("#shareBtn");
+    await p2.waitForSelector("#toast.show", { timeout: 2000 });
+    assert((await p2.$eval("#toast", (e) => e.textContent)) === "https://shozbot.com/word-square/", "with nothing to share or copy with, the toast shows the link");
+    await c2.close();
+  }
+
+  // 24) A screen too narrow for a fifth item in the ? row — 320px, where the ?
+  //     already touches the padding — carries the icon at the end of the links
+  //     row instead, still 34px, and nothing scrolls sideways.
+  {
+    const c = await browser.newContext({ viewport: { width: 320, height: 568 }, isMobile: true });
+    const p = await c.newPage();
+    p.on("pageerror", (e) => errors.push(e.message));
+    await p.goto(base);
+    await p.waitForSelector("#grid .cell");
+    await p.click("#helpClose");
+    const narrow = await p.evaluate(() => {
+      const s = document.getElementById("shareBtn"), r = s.getBoundingClientRect(), l = document.querySelector("#dailyLinks a:last-of-type").getBoundingClientRect();
+      return { parent: s.parentNode.id, w: r.width, cy: r.top + r.height / 2, lcy: l.top + l.height / 2, rightOfLinks: r.left > l.right,
+        scrollWidth: document.documentElement.scrollWidth, actions: document.querySelector(".actions").getBoundingClientRect().bottom };
+    });
+    assert(narrow.parent === "dailyLinks" && narrow.w === 34 && narrow.rightOfLinks && Math.abs(narrow.cy - narrow.lcy) < 1 && narrow.scrollWidth <= 320 && narrow.actions <= 568,
+      `at 320px the icon rides the links row: ${JSON.stringify(narrow)}`);
+    // Widening the window brings it back to the ? row.
+    await p.setViewportSize({ width: 375, height: 667 });
+    await p.waitForFunction(() => document.getElementById("shareBtn").parentNode.className === "topbar", null, { timeout: 2000 });
+    await c.close();
+  }
+
   assert(errors.length === 0, "page errors: " + errors.join(" | "));
   await browser.close();
   server.close();
-  console.log(`PASS — banks ${JSON.stringify(bankCheck.counts)} verified; play/hint/solve/reload, daily draw, first score kept, streak, migration, past puzzles, address, 375px fit OK`);
+  console.log(`PASS — banks ${JSON.stringify(bankCheck.counts)} verified; play/hint/solve/reload, daily draw, first score kept, streak, migration, past puzzles, address, 375px fit, share link per state, laptop toast, 320px placement OK`);
 }
 
 run().catch((err) => { console.error("FAIL —", err.message); process.exit(1); });

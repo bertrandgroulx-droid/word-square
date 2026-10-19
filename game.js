@@ -26,13 +26,15 @@ window.createWordSquare = function (ctx) {
     cellMin: 34, cellMax: 92, // grid squares clamp to this range, in px
     pipStrip: 18,             // px reserved for each strip of pips
     toastMs: 1600,
+    linkToastMs: 1800,        // "Link copied" stays a touch longer
+    shareBarMin: 365,         // px: below this the share icon leaves the top bar
     popMs: 120
   };
 
   var $ = function (id) { return document.getElementById(id); };
   var els = {
     size4: $("size4"), size5: $("size5"),
-    modeEasy: $("modeEasy"), modeHard: $("modeHard"), helpBtn: $("helpBtn"),
+    modeEasy: $("modeEasy"), modeHard: $("modeHard"), helpBtn: $("helpBtn"), shareBtn: $("shareBtn"),
     puzLabel: $("puzLabel"), dailyLinks: $("dailyLinks"), timer: $("timer"),
     boardWrap: document.querySelector(".board-wrap"),
     board: $("board"), grid: $("grid"), pipsR: $("pipsR"), pipsB: $("pipsB"),
@@ -568,6 +570,7 @@ window.createWordSquare = function (ctx) {
     els.dailyLinks.innerHTML = (isDaily ? ["past", "random"] : ["today", "past"]).map(function (k) {
       return '<a href="' + PLACES[k][1] + '" data-go="' + k + '">' + PLACES[k][0] + "</a>";
     }).join("");
+    placeShare();   // the share icon lives in this row on a narrow screen
     els.timer.textContent = mmss(elapsed);
     els.size4.classList.toggle("active", n === 4);
     els.size5.classList.toggle("active", n === 5);
@@ -589,11 +592,12 @@ window.createWordSquare = function (ctx) {
     setTimeout(function () { el.classList.remove("pop"); }, CONFIG.popMs);
   }
 
-  function toast(msg) {
+  function toast(msg, ms, wrap) {
     els.toast.textContent = msg;
+    els.toast.classList.toggle("wrap", !!wrap);
     els.toast.classList.add("show");
     clearTimeout(toastId);
-    toastId = setTimeout(function () { els.toast.classList.remove("show"); }, CONFIG.toastMs);
+    toastId = setTimeout(function () { els.toast.classList.remove("show"); }, ms || CONFIG.toastMs);
   }
 
   // ---- timer -----------------------------------------------------------------
@@ -786,6 +790,48 @@ window.createWordSquare = function (ctx) {
     });
   }
 
+  // ---- sharing a link to this -------------------------------------------------
+  // The icon at the top shares a link to what is on screen, as every Shozbot
+  // phone app does (2026-10-19). A specific day's grid — in play, solved, or
+  // on its results — gets the dated link, so it still opens the same puzzle
+  // tomorrow; a random puzzle and the Past puzzles list get the plain address.
+  // Always the shozbot.com address from the canonical link, never location:
+  // this file is served from the old github.io address too, and saved progress
+  // lives per address. (The Share button on the results shares the score text
+  // and is a different thing.)
+  function canonical() {
+    var l = document.querySelector('link[rel="canonical"]');
+    return l && l.href ? l.href : "https://shozbot.com/word-square/";
+  }
+  function shareLink() {
+    var onList = !els.pastBack.classList.contains("hidden");
+    var dated = puzzle && puzzle.kind === "daily" && !onList;
+    return dated
+      ? { url: canonical() + "?daily=" + puzzle.meta.iso, title: "Word Square · Daily No. " + puzzle.meta.number }
+      : { url: canonical(), title: "Word Square" };
+  }
+  // A phone opens its share sheet; a laptop copies the link and says so; where
+  // neither exists the link itself is shown.
+  function shareThis() {
+    var s = shareLink();
+    if (navigator.share) { navigator.share({ title: s.title, url: s.url }).catch(function () {}); return; }
+    var showLink = function () { toast(s.url, CONFIG.linkToastMs, true); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(s.url).then(function () { toast("Link copied", CONFIG.linkToastMs); }, showLink);
+      return;
+    }
+    showLink();
+  }
+  // Where the icon sits: left of the ? while the top bar has the room, which
+  // it has from 365px up; narrower than that (320px, 360px Androids) the bar
+  // is full and the icon rides the end of the Past/Random links row instead.
+  function placeShare() {
+    var narrow = window.innerWidth < CONFIG.shareBarMin;
+    var want = narrow ? els.dailyLinks : els.helpBtn.parentNode;
+    if (els.shareBtn.parentNode === want) return;
+    if (narrow) want.appendChild(els.shareBtn); else want.insertBefore(els.shareBtn, els.helpBtn);
+  }
+
   // ---- past puzzles ----------------------------------------------------------
   function scoreText(r) {
     if (!r) return "Not played";
@@ -907,6 +953,7 @@ window.createWordSquare = function (ctx) {
       PLACES[a.dataset.go][2]();
     });
     els.helpBtn.addEventListener("click", function () { els.helpBack.classList.remove("hidden"); });
+    els.shareBtn.addEventListener("click", shareThis);
     els.helpClose.addEventListener("click", function () {
       els.helpBack.classList.add("hidden");
       write("help-seen", 1);
@@ -928,7 +975,7 @@ window.createWordSquare = function (ctx) {
     [els.winBack, els.pastBack].forEach(function (b) {
       b.addEventListener("click", function (e) { if (e.target === b) dismiss(); });
     });
-    var refit = function () { sizeBoard(); sizeTray(tray.length); };
+    var refit = function () { placeShare(); sizeBoard(); sizeTray(tray.length); };
     window.addEventListener("resize", refit);
     window.addEventListener("orientationchange", function () { setTimeout(refit, 150); });
   }
@@ -965,7 +1012,8 @@ window.createWordSquare = function (ctx) {
         return { id: p.id, sol: p.sol.join(""), givens: Object.keys(p.givens) };
       },
       results: boardResults,
-      shareText: function () { return shown ? shareText(shown) : ""; }
+      shareText: function () { return shown ? shareText(shown) : ""; },
+      shareLink: shareLink
     }
   };
 };

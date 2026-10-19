@@ -103,6 +103,21 @@
     border: 1px solid var(--border); background: var(--card-2);
     color: var(--text); font-family: inherit; font-size: 0.95rem; cursor: pointer;
   }
+  /* The share icon: the same button every Shozbot phone app carries, to the
+     left of the ? and its size. Muted until hovered or focused. */
+  .share-btn {
+    flex: none; width: 34px; height: 34px; border-radius: 999px; padding: 0;
+    border: 1px solid var(--border); background: var(--card-2);
+    color: var(--muted); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .share-btn svg { width: 18px; height: 18px; }
+  .share-btn:hover, .share-btn:focus-visible { color: var(--text); }
+  /* Below 365px the top bar is full — at 320px the ? already touches the
+     padding — so the icon moves to the end of the links row instead (game.js
+     moves the node). Measured: it fits the bar from 365px up with the gap kept. */
+  .links { align-items: center; }
+  .links .share-btn { margin-left: auto; }
 
   /* ---------------- meta line ---------------- */
   /* The studio credit is inserted right after .puz, which would otherwise make
@@ -260,9 +275,13 @@
     transform: translateX(-50%); z-index: 60;
     background: rgba(6, 5, 18, 0.92); border: 1px solid var(--border);
     border-radius: 999px; padding: 7px 14px; font-size: 0.82rem; white-space: nowrap;
+    max-width: calc(100vw - 24px);
     opacity: 0; transition: opacity 0.2s; pointer-events: none;
   }
   .toast.show { opacity: 1; }
+  /* A link shown in the toast (no share sheet, no clipboard) is longer than a
+     small screen, so it is allowed to wrap. */
+  .toast.wrap { white-space: normal; overflow-wrap: anywhere; text-align: center; border-radius: 14px; width: max-content; }
 </style>
 </head>
 <body>
@@ -277,6 +296,12 @@
       <button type="button" id="modeEasy">Easy</button>
       <button type="button" id="modeHard">Hard</button>
     </div>
+    <button class="share-btn" id="shareBtn" type="button" aria-label="Share a link to this">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3v12M8 7l4-4 4 4"/><path d="M6 11H5v9h14v-9h-1"/>
+      </svg>
+    </button>
     <button class="icon-btn" id="helpBtn" type="button" aria-label="How to play">?</button>
   </div>
 
